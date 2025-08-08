@@ -1,11 +1,13 @@
 import logging
 import os
-from datetime import timedelta, datetime
+from datetime import datetime
 from enum import Enum
+from functools import partial
+from multiprocessing import Pool, freeze_support, RLock
+from multiprocessing.pool import AsyncResult
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
-import polars as pl
 from tqdm import tqdm
 
 from core.columns import SYMBOL, TRADE_TIME, DATE, IS_BUYER_MAKER, PRICE, QUANTITY
@@ -14,11 +16,9 @@ from core.exchange import Exchange
 from core.paths import FEATURE_DIR, get_root_dir
 from core.time_utils import Bounds
 from core.utils import configure_logging
-from feature_writer.feature_exprs import compute_return, compute_share_of_long_trades, \
-    compute_powerlaw_alpha, compute_slippage_imbalance, compute_flow_imbalance, compute_asset_return_zscore, \
-    compute_quote_abs_zscore, compute_num_trades
 from feature_writer.enums import PumpEvent
-from feature_writer.utils import load_pumps
+from feature_writer.feature_exprs import *
+from feature_writer.utils import load_pumps, aggregate_into_trades
 
 
 class NamedTimeDelta(Enum):
@@ -67,8 +67,7 @@ class PumpsFeatureWriter:
     @staticmethod
     def side_expr() -> pl.Expr:
         """
-        Overwrite the way we compute side sign. For Binance we do it with IS_BUYER_MAKER field
-        for OKX we use simply use Side Literal string
+        Overwrite the way we compute side sign. For Binance we do it with IS_BUYER_MAKER
         """
         return 1 - 2 * pl.col(IS_BUYER_MAKER)
 
@@ -185,12 +184,13 @@ class PumpsFeatureWriter:
 
         return features
 
-    def create_cross_section(self, pump_event: PumpEvent) -> Optional[pl.DataFrame]:
+    def create_cross_section(self, pump_event: PumpEvent, position: int) -> Optional[pl.DataFrame]:
         logging.info("Creating cross section")
         bounds: Bounds = Bounds(
             start_inclusive=pump_event.time - timedelta(days=30),
             end_exclusive=pump_event.time + timedelta(hours=1),
         )
+        pbar = tqdm(desc=f"Loading currency_pairs", position=2 + position, leave=False)
         currency_pairs: List[CurrencyPair] = self.get_currency_pairs(bounds=bounds)
 
         if len(currency_pairs) == 0:
@@ -203,12 +203,14 @@ class PumpsFeatureWriter:
 
         cross_section_features: List[Dict[str, float]] = []
 
-        for currency_pair in tqdm(currency_pairs):
+        pbar.set_description("Iterating over currency_pairs")
+        for currency_pair in currency_pairs:
             df: pl.DataFrame = self.load_data_for_currency_pair(bounds=bounds, currency_pair=currency_pair)
             df = self.preprocess_data_for_currency(df=df)
             features: Dict[str, Any] = self.compute_features(df=df, pump_event=pump_event)
             features["currency_pair"] = currency_pair.name
             cross_section_features.append(features)
+            pbar.update(1)
 
         return pl.DataFrame(data=cross_section_features)
 
@@ -222,21 +224,45 @@ class PumpsFeatureWriter:
     def run(self, pump_events: List[PumpEvent]) -> None:
         for pump_event in tqdm(pump_events):
             try:
-                features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event)
+                features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event, position=0)
                 if features is not None:
                     self.write_cross_section(features=features, pump_event=pump_event)
-
             except Exception as e:
                 logging.error("%s", e)
+
+    def run_parallel(self, pump_events: List[PumpEvent], cpu_count: int) -> None:
+        freeze_support()  # for Windows support
+        tqdm.set_lock(RLock())  # for managing output contention
+
+        with Pool(
+                processes=cpu_count, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),), maxtasksperchild=1
+        ) as pool:
+            promises: List[AsyncResult] = []
+            i: int = 0
+
+            for pump_event in pump_events:
+                promises.append(
+                    pool.apply_async(
+                        partial(
+                            self.create_cross_section,
+                            pump_event=pump_event,
+                            position=i % cpu_count
+                        )
+                    )
+                )
+                i += 1
+
+            for p in tqdm(promises, desc="Overall progress", position=0):
+                p.get()
 
 
 def main():
     configure_logging()
     pump_events: List[PumpEvent] = load_pumps(
-        path=get_root_dir() / "src/feature_writer/Pumps/resources/pumps.json"
+        path=get_root_dir() / "src/resources/pumps.json"
     )
     writer = PumpsFeatureWriter()
-    writer.run(pump_events=pump_events[304:])
+    writer.run_parallel(pump_events=pump_events, cpu_count=4)
 
 
 if __name__ == "__main__":

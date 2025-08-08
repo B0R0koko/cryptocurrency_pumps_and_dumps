@@ -13,7 +13,7 @@ class PumpEvent:
     exchange: Exchange
 
     def __str__(self) -> str:
-        return f"{self.currency_pair.name}@{self.exchange.name}-{self.time.date()}"
+        return f"{self.currency_pair.name}-{self.exchange.name}-{self.time.date()}"
 
     def as_dict(self) -> Dict[str, str]:
         return {
