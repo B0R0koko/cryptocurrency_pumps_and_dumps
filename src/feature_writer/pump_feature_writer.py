@@ -14,9 +14,9 @@ from core.columns import SYMBOL, TRADE_TIME, DATE, IS_BUYER_MAKER, PRICE, QUANTI
 from core.currency_pair import CurrencyPair
 from core.exchange import Exchange
 from core.paths import FEATURE_DIR, get_root_dir
+from core.pump_event import PumpEvent
 from core.time_utils import Bounds
 from core.utils import configure_logging
-from feature_writer.enums import PumpEvent
 from feature_writer.feature_exprs import *
 from feature_writer.utils import load_pumps, aggregate_into_trades
 
@@ -134,8 +134,6 @@ class PumpsFeatureWriter:
         rb: datetime = pump_event.time - timedelta(hours=1)
 
         for window in (
-                NamedTimeDelta.ONE_MINUTE,
-                NamedTimeDelta.TWO_MINUTES,
                 NamedTimeDelta.FIVE_MINUTES,
                 NamedTimeDelta.FIFTEEN_MINUTES,
                 NamedTimeDelta.ONE_HOUR,
@@ -194,16 +192,18 @@ class PumpsFeatureWriter:
         currency_pairs: List[CurrencyPair] = self.get_currency_pairs(bounds=bounds)
 
         if len(currency_pairs) == 0:
-            logging.error("No currencies in the cross-section of the pump %s", pump_event)
+            pbar.set_description(f"Error: no currencies in the cross-section of the pump {str(pump_event)}")
             return None
 
         if pump_event.currency_pair not in currency_pairs:
-            logging.error("No data found for target currency %s", pump_event)
+            pbar.set_description(f"Error: no data found for target currency {str(pump_event)}")
             return None
 
         cross_section_features: List[Dict[str, float]] = []
 
         pbar.set_description("Iterating over currency_pairs")
+        pbar.total = len(currency_pairs)
+
         for currency_pair in currency_pairs:
             df: pl.DataFrame = self.load_data_for_currency_pair(bounds=bounds, currency_pair=currency_pair)
             df = self.preprocess_data_for_currency(df=df)
@@ -218,17 +218,13 @@ class PumpsFeatureWriter:
     def write_cross_section(features: pl.DataFrame, pump_event: PumpEvent) -> None:
         path: Path = FEATURE_DIR / "pumps" / f"{str(pump_event)}.parquet"
         os.makedirs(path.parent, exist_ok=True)
-        logging.info("Writing cross section to %s", path)
         features.write_parquet(file=path)
 
     def run(self, pump_events: List[PumpEvent]) -> None:
         for pump_event in tqdm(pump_events):
-            try:
-                features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event, position=0)
-                if features is not None:
-                    self.write_cross_section(features=features, pump_event=pump_event)
-            except Exception as e:
-                logging.error("%s", e)
+            features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event, position=0)
+            if features is not None:
+                self.write_cross_section(features=features, pump_event=pump_event)
 
     def run_parallel(self, pump_events: List[PumpEvent], cpu_count: int) -> None:
         freeze_support()  # for Windows support
@@ -262,7 +258,7 @@ def main():
         path=get_root_dir() / "src/resources/pumps.json"
     )
     writer = PumpsFeatureWriter()
-    writer.run_parallel(pump_events=pump_events, cpu_count=4)
+    writer.run_parallel(pump_events=pump_events, cpu_count=10)
 
 
 if __name__ == "__main__":
