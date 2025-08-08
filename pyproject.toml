@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "cryptocurrency-pumps-and-dumps"
+version = "0.1.0"
+description = ""
+authors = ["Mikhail Mironov <mihail.borokoko@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+polars = "^1.32.2"
+pandas = "^2.3.1"
+numpy = "^2.3.2"
+tqdm = "^4.67.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
