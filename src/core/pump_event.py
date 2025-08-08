@@ -13,7 +13,7 @@ class PumpEvent:
     exchange: Exchange
 
     def __str__(self) -> str:
-        formatted_time: str = self.time.strftime("%Y-%m-%dT%H:%M:%S")
+        formatted_time: str = self.time.strftime("%Y-%m-%dT%H-%M-%S")
         return f"{self.currency_pair.name}-{self.exchange.name}-{formatted_time}"
 
     def as_dict(self) -> Dict[str, str]:

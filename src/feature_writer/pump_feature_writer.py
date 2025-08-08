@@ -214,17 +214,16 @@ class PumpsFeatureWriter:
 
         return pl.DataFrame(data=cross_section_features)
 
-    @staticmethod
-    def write_cross_section(features: pl.DataFrame, pump_event: PumpEvent) -> None:
-        path: Path = FEATURE_DIR / "pumps" / f"{str(pump_event)}.parquet"
-        os.makedirs(path.parent, exist_ok=True)
-        features.write_parquet(file=path)
+    def _write_cross_section(self, pump_event: PumpEvent, position: int = 0) -> None:
+        features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event, position=position)
+        if features is not None:
+            path: Path = FEATURE_DIR / "pumps" / f"{str(pump_event)}.parquet"
+            os.makedirs(path.parent, exist_ok=True)
+            features.write_parquet(file=path)
 
     def run(self, pump_events: List[PumpEvent]) -> None:
         for pump_event in tqdm(pump_events):
-            features: Optional[pl.DataFrame] = self.create_cross_section(pump_event=pump_event, position=0)
-            if features is not None:
-                self.write_cross_section(features=features, pump_event=pump_event)
+            self._write_cross_section(pump_event=pump_event)
 
     def run_parallel(self, pump_events: List[PumpEvent], cpu_count: int) -> None:
         freeze_support()  # for Windows support
@@ -240,7 +239,7 @@ class PumpsFeatureWriter:
                 promises.append(
                     pool.apply_async(
                         partial(
-                            self.create_cross_section,
+                            self._write_cross_section,
                             pump_event=pump_event,
                             position=i % cpu_count
                         )
