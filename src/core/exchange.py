@@ -1,8 +1,8 @@
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
-from core.paths import BINANCE_SPOT_HIVE_TRADES, BINANCE_USDM_HIVE_TRADES, OKX_SPOT_HIVE_TRADES
+from core.paths import BINANCE_SPOT_HIVE_TRADES
 
 
 class Exchange(Enum):

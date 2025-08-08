@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 
 import requests
 
-from core.currency import Currency
 from core.time_utils import Bounds
 
 

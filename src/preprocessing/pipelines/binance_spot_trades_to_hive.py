@@ -43,12 +43,13 @@ class BinanceSpotTrades2Hive:
         self.raw_data_dir: Path = raw_data_dir
         self.output_dir: Path = output_dir
 
-    def preprocess_batched_data(self, df_batch: pd.DataFrame, currency_pair: CurrencyPair, day: date) -> pd.DataFrame:
+    @staticmethod
+    def preprocess_batched_data(df_batch: pd.DataFrame, currency_pair: CurrencyPair, day: date) -> pd.DataFrame:
         """Attach new columns and convert dtypes here before saving to hive structure"""
         # Since 2025-01-01 Binance Spot data is written not in "ms" but in "us" - microseconds
         unit: str = "ms" if day < date(2025, 1, 1) else "us"
         df_batch[TRADE_TIME] = pd.to_datetime(df_batch[TRADE_TIME], unit=unit)
-        # Create date column from TRADE_TIME
+        # Create a date column from TRADE_TIME
         df_batch["date"] = day
         # Create symbol column
         df_batch["symbol"] = currency_pair.name
@@ -107,7 +108,7 @@ class BinanceSpotTrades2Hive:
 
 def run_main():
     bounds: Bounds = Bounds.for_days(
-        date(2019, 1, 1), date(2020, 1, 1)
+        date(2018, 1, 1), date(2019, 1, 1)
     )
     pipe = BinanceSpotTrades2Hive(
         bounds=bounds,

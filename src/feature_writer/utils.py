@@ -13,7 +13,7 @@ from core.exchange import Exchange
 from core.paths import FEATURE_DIR
 from core.paths import get_root_dir
 from core.utils import configure_logging
-from feature_writer.enums import PumpEvent
+from core.pump_event import PumpEvent
 
 
 def aggregate_into_trades(df_ticks: pl.DataFrame) -> pl.DataFrame:
