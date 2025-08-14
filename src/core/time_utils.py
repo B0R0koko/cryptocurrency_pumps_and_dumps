@@ -101,7 +101,7 @@ class Bounds:
     @classmethod
     def for_days(cls, start_inclusive: date, end_exclusive: date) -> "Bounds":
         """
-        For instance if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
+        For instance, if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
         Final Bounds will have the following datetime (2024-11-01 0:00:00, 2024-11-30 23:59:59)
         """
         return cls(
@@ -129,7 +129,7 @@ class Bounds:
                 f"{self.end_exclusive.strftime("%Y-%m-%d %H:%M:%S")}")
 
     def generate_overlapping_bounds(self, step: timedelta, interval: timedelta) -> List["Bounds"]:
-        """Returns a list of bounds created from parent Bounds interval with a certain interval size and step"""
+        """Returns a list of bounds created from a parent Bounds interval with a certain interval size and step"""
         intervals: List["Bounds"] = []
 
         lb = self.start_inclusive

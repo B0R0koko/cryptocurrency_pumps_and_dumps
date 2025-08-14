@@ -103,6 +103,7 @@ class PumpsFeatureWriter:
         unique_symbols: List[str] = pl.Series(
             self._hive.filter(
                 pl.col(DATE).is_between(bounds.day0, bounds.day1) &
+                pl.col(TRADE_TIME).is_between(bounds.start_inclusive, bounds.end_exclusive) &
                 pl.col(SYMBOL).str.ends_with("BTC")
             )
             .select(SYMBOL).unique().collect()
