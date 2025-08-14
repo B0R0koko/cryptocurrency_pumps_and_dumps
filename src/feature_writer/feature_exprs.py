@@ -2,6 +2,8 @@ from datetime import timedelta
 
 import polars as pl
 
+from core.feature_type import FeatureType
+
 
 def compute_asset_hold_time() -> pl.Expr:
     return (
@@ -11,7 +13,7 @@ def compute_asset_hold_time() -> pl.Expr:
 
 
 def compute_flow_imbalance() -> pl.Expr:
-    return (pl.col("quote_sign").sum() / pl.col("quote_abs").sum()).alias("flow_imbalance")
+    return (pl.col("quote_sign").sum() / pl.col("quote_abs").sum()).alias(FeatureType.FLOW_IMBALANCE.name)
 
 
 def compute_return() -> pl.Expr:
@@ -20,25 +22,26 @@ def compute_return() -> pl.Expr:
     | p0, p1, p2 |t1| p3, p4, p5 |t2| -> return = (p5 / p2 - 1) * 1e4
     return =
     """
-    return ((pl.col("price_last").last() / pl.col("price_last_prev").first() - 1) * 1e4).alias("asset_return")
+    return ((pl.col("price_last").last() / pl.col("price_last_prev").first() - 1) * 1e4).alias(
+        FeatureType.ASSET_RETURN.name)
 
 
 def compute_slippage_imbalance() -> pl.Expr:
     return (
         (pl.col("quote_slippage_sign").sum() / pl.col("quote_slippage_abs").sum())
-        .alias("slippage_imbalance")
+        .alias(FeatureType.SLIPPAGE_IMBALANCE.name)
     )
 
 
 def compute_powerlaw_alpha() -> pl.Expr:
     return (
         (1 + pl.len() / (pl.col("quote_abs") / pl.col("quote_abs").min()).log().sum())
-        .alias("powerlaw_alpha")
+        .alias(FeatureType.POWERLAW_ALPHA.name)
     )
 
 
 def compute_share_of_long_trades() -> pl.Expr:
-    return (pl.col("is_long").sum() / pl.len()).alias("share_of_long_trades")
+    return (pl.col("is_long").sum() / pl.len()).alias(FeatureType.SHARE_OF_LONG_TRADES.name)
 
 
 def compute_asset_return_zscore(asset_return_std: float) -> pl.Expr:

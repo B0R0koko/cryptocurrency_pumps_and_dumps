@@ -1,7 +1,6 @@
 import logging
 import os
 from datetime import datetime
-from enum import Enum
 from functools import partial
 from multiprocessing import Pool, freeze_support, RLock
 from multiprocessing.pool import AsyncResult
@@ -15,33 +14,33 @@ from core.currency_pair import CurrencyPair
 from core.exchange import Exchange
 from core.paths import FEATURE_DIR, get_root_dir
 from core.pump_event import PumpEvent
-from core.time_utils import Bounds
+from core.time_utils import Bounds, NamedTimeDelta
 from core.utils import configure_logging
 from feature_writer.feature_exprs import *
 from feature_writer.utils import load_pumps, aggregate_into_trades
 
+# Offsets used to compute features
+REGRESSOR_OFFSETS: List[NamedTimeDelta] = [
+    NamedTimeDelta.FIVE_MINUTES,
+    NamedTimeDelta.FIFTEEN_MINUTES,
+    NamedTimeDelta.ONE_HOUR,
+    NamedTimeDelta.TWO_HOURS,
+    NamedTimeDelta.FOUR_HOURS,
+    NamedTimeDelta.TWELVE_HOURS,
+    NamedTimeDelta.ONE_DAY,
+    NamedTimeDelta.TWO_DAYS,
+    NamedTimeDelta.ONE_WEEK,
+    NamedTimeDelta.TWO_WEEKS
+]
 
-class NamedTimeDelta(Enum):
-    ONE_MINUTE = (timedelta(minutes=1), "1MIN")
-    TWO_MINUTES = (timedelta(minutes=2), "2MIN")
-    THREE_MINUTES = (timedelta(minutes=3), "3MIN")
-    FOUR_MINUTES = (timedelta(minutes=4), "4MIN")
-    FIVE_MINUTES = (timedelta(minutes=5), "5MIN")
-    FIFTEEN_MINUTES = (timedelta(minutes=15), "15MIN")
-    ONE_HOUR = (timedelta(hours=1), "1H")
-    TWO_HOURS = (timedelta(hours=2), "2H")
-    FOUR_HOURS = (timedelta(hours=4), "4H")
-    TWELVE_HOURS = (timedelta(hours=12), "12H")
-    ONE_DAY = (timedelta(days=1), "1D")
-    TWO_DAYS = (timedelta(days=2), "2D")
-    ONE_WEEK = (timedelta(weeks=1), "7D")
-    TWO_WEEKS = (timedelta(weeks=2), "14D")
-
-    def get_td(self) -> timedelta:
-        return self.value[0]
-
-    def get_slug(self) -> str:
-        return self.value[1]
+# Offsets to compute decay returns
+DECAY_OFFSETS: List[NamedTimeDelta] = [
+    NamedTimeDelta.ONE_MINUTE,
+    NamedTimeDelta.TWO_MINUTES,
+    NamedTimeDelta.THREE_MINUTES,
+    NamedTimeDelta.FOUR_MINUTES,
+    NamedTimeDelta.FIVE_MINUTES,
+]
 
 
 class PumpsFeatureWriter:
@@ -104,6 +103,7 @@ class PumpsFeatureWriter:
         unique_symbols: List[str] = pl.Series(
             self._hive.filter(
                 pl.col(DATE).is_between(bounds.day0, bounds.day1) &
+                pl.col(TRADE_TIME).is_between(bounds.start_inclusive, bounds.end_exclusive) &
                 pl.col(SYMBOL).str.ends_with("BTC")
             )
             .select(SYMBOL).unique().collect()
@@ -133,46 +133,41 @@ class PumpsFeatureWriter:
 
         rb: datetime = pump_event.time - timedelta(hours=1)
 
-        for window in (
-                NamedTimeDelta.FIVE_MINUTES,
-                NamedTimeDelta.FIFTEEN_MINUTES,
-                NamedTimeDelta.ONE_HOUR,
-                NamedTimeDelta.TWO_HOURS,
-                NamedTimeDelta.FOUR_HOURS,
-                NamedTimeDelta.TWELVE_HOURS,
-                NamedTimeDelta.ONE_DAY,
-                NamedTimeDelta.TWO_DAYS,
-                NamedTimeDelta.ONE_WEEK,
-                NamedTimeDelta.TWO_WEEKS
-        ):
+        for window in REGRESSOR_OFFSETS:
             # Compute using data 1 hour prior to the pump
             df_filtered: pl.DataFrame = df.filter(pl.col(TRADE_TIME).is_between(rb - window.get_td(), rb))
             df_hourly_filtered: pl.DataFrame = df_hourly.filter(pl.col(TRADE_TIME).is_between(rb - window.get_td(), rb))
 
             values: Dict[str, float] = {
-                f"asset_return@{window.get_slug()}": df_filtered.select(compute_return()).item(),
-                f"asset_return_zscore@{window.get_slug()}": df_hourly_filtered.select(
+                # Asset return
+                FeatureType.ASSET_RETURN.col_name(offset=window): df_filtered.select(compute_return()).item(),
+                # Asset return zscore
+                FeatureType.ASSET_RETURN_ZSCORE.col_name(offset=window): df_hourly_filtered.select(
                     compute_asset_return_zscore(asset_return_std=asset_return_std)
                 ).item(),
-                f"quote_abs_zscore@{window.get_slug()}": df_hourly_filtered.select(
+                # Quote abs zscore
+                FeatureType.QUOTE_ABS_ZSCORE.col_name(offset=window): df_hourly_filtered.select(
                     compute_quote_abs_zscore(quote_abs_std=quote_abs_std)
                 ).item(),
-                f"share_of_long_trades@{window.get_slug()}": df_filtered.select(compute_share_of_long_trades()).item(),
-                f"powerlaw_alpha@{window.get_slug()}": df_filtered.select(compute_powerlaw_alpha()).item(),
-                f"slippage_imbalance@{window.get_slug()}": df_filtered.select(compute_slippage_imbalance()).item(),
-                f"flow_imbalance@{window.get_slug()}": df_filtered.select(compute_flow_imbalance()).item(),
-                f"num_trades@{window.get_slug()}": df_filtered.select(compute_num_trades()).item(),
+                # Share of long trades
+                FeatureType.SHARE_OF_LONG_TRADES.col_name(offset=window): df_filtered.select(
+                    compute_share_of_long_trades()).item(),
+                # Powerlaw alpha
+                FeatureType.POWERLAW_ALPHA.col_name(offset=window): df_filtered.select(
+                    compute_powerlaw_alpha()).item(),
+                # Slippage imbalance
+                FeatureType.SLIPPAGE_IMBALANCE.col_name(offset=window): df_filtered.select(
+                    compute_slippage_imbalance()).item(),
+                # Flow imbalance
+                FeatureType.FLOW_IMBALANCE.col_name(offset=window): df_filtered.select(
+                    compute_flow_imbalance()).item(),
+                # Num trades
+                FeatureType.NUM_TRADES.col_name(offset=window): df_filtered.select(compute_num_trades()).item(),
             }
             features |= values
 
         # Price decay
-        for decay_window in (
-                NamedTimeDelta.ONE_MINUTE,
-                NamedTimeDelta.TWO_MINUTES,
-                NamedTimeDelta.THREE_MINUTES,
-                NamedTimeDelta.FOUR_MINUTES,
-                NamedTimeDelta.FIVE_MINUTES,
-        ):
+        for decay_window in DECAY_OFFSETS:
             features[f"target_return@{decay_window.get_slug()}"] = (
                 df.filter(
                     pl.col(TRADE_TIME).is_between(pump_event.time, pump_event.time + decay_window.get_td())

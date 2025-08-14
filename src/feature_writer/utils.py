@@ -12,8 +12,8 @@ from core.currency_pair import CurrencyPair
 from core.exchange import Exchange
 from core.paths import FEATURE_DIR
 from core.paths import get_root_dir
-from core.utils import configure_logging
 from core.pump_event import PumpEvent
+from core.utils import configure_logging
 
 
 def aggregate_into_trades(df_ticks: pl.DataFrame) -> pl.DataFrame:
@@ -57,7 +57,7 @@ def load_pumps(path: Path) -> List[PumpEvent]:
 
 def create_dataset() -> pd.DataFrame:
     configure_logging()
-    path: Path = get_root_dir() / "src/feature_writer/Pumps/resources/pumps.json"
+    path: Path = get_root_dir() / "src/resources/pumps.json"
     pump_events: List[PumpEvent] = load_pumps(path=path)
 
     dfs: List[pd.DataFrame] = []
@@ -70,13 +70,17 @@ def create_dataset() -> pd.DataFrame:
             continue
 
         df_cross_section: pd.DataFrame = pd.read_parquet(cross_section_path)
+
+        # Add additional columns
         df_cross_section["pump_hash"] = str(pump)
         df_cross_section["pump_time"] = pump.time
         df_cross_section["pumped_currency_pair"] = pump.currency_pair.name
 
         dfs.append(df_cross_section)
 
-    return pd.concat(dfs)
+    df: pd.DataFrame = pd.concat(dfs)
+    df = df.reset_index(drop=True)
+    return df
 
 
 def main():

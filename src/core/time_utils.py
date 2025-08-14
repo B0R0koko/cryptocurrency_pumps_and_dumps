@@ -63,6 +63,29 @@ def format_date(day: date) -> str:
     return day.strftime("%Y%m%d")
 
 
+class NamedTimeDelta(Enum):
+    ONE_MINUTE = (timedelta(minutes=1), "1MIN")
+    TWO_MINUTES = (timedelta(minutes=2), "2MIN")
+    THREE_MINUTES = (timedelta(minutes=3), "3MIN")
+    FOUR_MINUTES = (timedelta(minutes=4), "4MIN")
+    FIVE_MINUTES = (timedelta(minutes=5), "5MIN")
+    FIFTEEN_MINUTES = (timedelta(minutes=15), "15MIN")
+    ONE_HOUR = (timedelta(hours=1), "1H")
+    TWO_HOURS = (timedelta(hours=2), "2H")
+    FOUR_HOURS = (timedelta(hours=4), "4H")
+    TWELVE_HOURS = (timedelta(hours=12), "12H")
+    ONE_DAY = (timedelta(days=1), "1D")
+    TWO_DAYS = (timedelta(days=2), "2D")
+    ONE_WEEK = (timedelta(weeks=1), "7D")
+    TWO_WEEKS = (timedelta(weeks=2), "14D")
+
+    def get_td(self) -> timedelta:
+        return self.value[0]
+
+    def get_slug(self) -> str:
+        return self.value[1]
+
+
 @dataclass
 class Bounds:
     start_inclusive: datetime
@@ -78,7 +101,7 @@ class Bounds:
     @classmethod
     def for_days(cls, start_inclusive: date, end_exclusive: date) -> "Bounds":
         """
-        For instance if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
+        For instance, if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
         Final Bounds will have the following datetime (2024-11-01 0:00:00, 2024-11-30 23:59:59)
         """
         return cls(
@@ -106,7 +129,7 @@ class Bounds:
                 f"{self.end_exclusive.strftime("%Y-%m-%d %H:%M:%S")}")
 
     def generate_overlapping_bounds(self, step: timedelta, interval: timedelta) -> List["Bounds"]:
-        """Returns a list of bounds created from parent Bounds interval with a certain interval size and step"""
+        """Returns a list of bounds created from a parent Bounds interval with a certain interval size and step"""
         intervals: List["Bounds"] = []
 
         lb = self.start_inclusive
@@ -127,11 +150,11 @@ class Bounds:
     def contain_days(self, day: date) -> bool:
         return self.day0 <= day <= self.day1
 
-    def create_offset_bounds(self, time_offset: "TimeOffset") -> "Bounds":
-        """Returns Bounds for the interval which is used to compute target"""
+    def create_offset_bounds(self, time_offset: NamedTimeDelta) -> "Bounds":
+        """Returns Bounds for the interval which is used to compute the target"""
         return Bounds(
             start_inclusive=self.end_exclusive,
-            end_exclusive=self.end_exclusive + time_offset.value,
+            end_exclusive=self.end_exclusive + time_offset.get_td(),
         )
 
     def expand_bounds(
@@ -169,27 +192,6 @@ class Bounds:
 
     def __eq__(self, other) -> bool:
         return self.start_inclusive == other.start_inclusive and self.end_exclusive == other.end_exclusive
-
-
-class TimeOffset(Enum):
-    HALF_SECOND = timedelta(milliseconds=500)
-    ONE_SECOND = timedelta(seconds=1)
-    FIVE_SECONDS = timedelta(seconds=5)
-    TEN_SECONDS = timedelta(seconds=10)
-    HALF_MINUTE = timedelta(seconds=30)
-    MINUTE = timedelta(minutes=1)
-    FIVE_MINUTES = timedelta(minutes=5)
-    FIFTEEN_MINUTES = timedelta(minutes=15)
-    HALF_HOUR = timedelta(minutes=30)
-    HOUR = timedelta(hours=1)
-    TWO_HOURS = timedelta(hours=2)
-    FOUR_HOURS = timedelta(hours=4)
-    EIGHT_HOURS = timedelta(hours=8)
-    TWELVE_HOURS = timedelta(hours=12)
-    DAY = timedelta(days=1)
-    THREE_DAYS = timedelta(days=3)
-    WEEK = timedelta(days=7)
-    TWO_WEEKS = timedelta(days=14)
 
 
 if __name__ == "__main__":

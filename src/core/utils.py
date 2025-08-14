@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 
 def configure_logging():
@@ -7,3 +8,4 @@ def configure_logging():
         handlers=[logging.StreamHandler()],
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     )
+    warnings.filterwarnings("ignore", category=FutureWarning)
