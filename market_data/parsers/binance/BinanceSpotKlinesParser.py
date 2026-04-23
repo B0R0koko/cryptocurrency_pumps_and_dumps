@@ -1,16 +1,13 @@
 import argparse
-import os
 from datetime import date
 from pathlib import Path
 from typing import List
 
 from scrapy.crawler import CrawlerProcess
-from scrapy.http import Response
 
 from core.currency_pair import CurrencyPair
 from core.paths import BINANCE_SPOT_RAW_KLINES
 from core.time_utils import Bounds
-from core.utils import configure_logging
 from market_data.parsers.binance.BinanceParser import BinanceBaseParser
 from market_data.parsers.settings import SETTINGS
 
@@ -55,15 +52,6 @@ class BinanceSpotKlinesParser(BinanceBaseParser):
     def output_zip_path(self, currency_pair: CurrencyPair, day: date) -> Path:
         return self.output_dir / currency_pair.name / f"klines@{self.interval}@{str(day)}.zip"
 
-    def _parse_zip_file(self, response: Response) -> None:
-        day: date = response.meta.get("day")
-        currency_pair: CurrencyPair = response.meta.get("currency_pair")
-        path: Path = self.output_zip_path(currency_pair=currency_pair, day=day)
-        os.makedirs(path.parent, exist_ok=True)
-
-        with open(path, "wb") as file:
-            file.write(response.body)
-
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download Binance spot daily klines from data.binance.vision.")
@@ -84,7 +72,6 @@ def _parse_args() -> argparse.Namespace:
 
 
 def run_main() -> None:
-    configure_logging()
     bounds: Bounds = Bounds.for_days(date(2018, 1, 1), date(2026, 3, 8))
     process: CrawlerProcess = CrawlerProcess(settings=SETTINGS)
 
