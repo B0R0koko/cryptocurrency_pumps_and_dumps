@@ -35,11 +35,11 @@ class BinanceSpotKlinesParser(BinanceBaseParser):
     name = "binance_spot_klines_parser"
 
     def __init__(
-        self,
-        bounds: Bounds,
-        currency_pairs: List[CurrencyPair],
-        output_dir: Path,
-        interval: str,
+            self,
+            bounds: Bounds,
+            currency_pairs: List[CurrencyPair],
+            output_dir: Path,
+            interval: str,
     ):
         super().__init__(bounds=bounds, currency_pairs=currency_pairs, output_dir=output_dir)
         if interval not in _SUPPORTED_INTERVALS:

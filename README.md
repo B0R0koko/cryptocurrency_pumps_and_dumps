@@ -195,7 +195,6 @@ cd paper && pdflatex -interaction=scrollmode access_highlighted.tex
 | `backtest/utils/` | Dataset building, evaluation metrics, robustness testing                    |
 | `notebooks/`     | Experiment orchestration + paper figures                                     |
 | `paper/`         | IEEE Access LaTeX sources                                                    |
-| `knowledge-base/`| Obsidian wiki with research notes and decisions                              |
 | `resources/`     | Event labels (`pumps.json`)                                                  |
 
 ## Development Commands
@@ -205,76 +204,6 @@ just format-all     # black (120-char lines)
 just pylint         # lint
 just mypy           # type checks
 poetry run pytest -q
-```
-
----
-
-## Knowledge Base
-
-![Obsidian knowledge graph of the vault](props/graph.png)
-
-The `knowledge-base/wiki/` folder is an Obsidian vault that documents the research rationale, all ingested papers, domain concepts, and codebase decisions behind this project. It contains 60+ interlinked markdown pages covering every model choice, dataset, and microstructure concept used in the paper. The graph above is the Obsidian-rendered link structure: central hubs (`index`, `backtest-portfolio`, `backtest-pipelines`, `Cross-Section`, `Pump-and-Dump Scheme`) connect to paper summaries (lavender), concept pages (cyan), module pages (blue), entities (magenta), and open-gap notes (orange).
-
-The knowledge base is structured as:
-
-```
-knowledge-base/wiki/
-├── index.md                      # master page catalog
-├── overview.md                   # project summary
-├── concepts/                     # Cross-Section, Flow Imbalance, Top-K AUC, etc.
-├── entities/                     # Binance, Telegram Pump Groups
-├── modules/                      # one page per code module
-├── papers/                       # one summary page per ingested paper
-├── thesis/                       # synthesis pages: survey, impact models, code audit
-└── gaps/                         # open empirical questions
-```
-
-You can use Claude Code to get a conversational interface to this knowledge: ask why SMOTE failed, how the square-root impact model is parameterized, what the prior literature says about cross-section ranking, or what bugs the code audit found.
-
----
-
-## Using Claude Code with the Knowledge Base
-
-[Claude Code](https://claude.ai/code) runs as a terminal agent with direct read access to the repository. It can cross-reference the wiki and the source code in the same conversation without any file upload step.
-
-```bash
-# Install Claude Code
-npm install -g @anthropic-ai/claude-code
-
-# Launch from the project root
-cd /path/to/pumps_and_dumps
-claude
-```
-
-Because Claude Code can read any file in the repo, you can ask questions that span both the wiki and the code:
-
-```
-Read knowledge-base/wiki/thesis/code_audit_findings.md and then open
-backtest/utils/evaluation.py. Confirm whether the use_price_impact flag
-bug described in the audit is still present in the current code.
-```
-
-```
-Read knowledge-base/wiki/concepts/Cross-Section.md and then show me
-exactly where the cross-section is constructed in backtest/utils/sample.py.
-```
-
-The `CLAUDE.md` file at the project root already configures Claude Code with the relevant conventions (module layout, type-hint style, test paths) and routes scoped work to the project's subagents (`research`, `developer`, `python-analyst`), so you do not need to re-explain the project structure.
-
-### Why query the wiki, not just the code
-
-The code tells you *what* happens; the wiki tells you *why*. Design rationale, rejected alternatives, literature context, statistical caveats, and code-audit findings are not reconstructible from `git log` or source. Grounding the LLM in both lets it answer "why did we pick this?" instead of only "what does this function do?", and keeps it from re-deriving conclusions the project has already settled.
-
-Example questions that need the wiki:
-
-```
-Explain why SMOTE fails in this project. What is the cross-section
-structure violation and why is it a problem?
-```
-
-```
-What is the most critical bug found in the backtest code audit and which
-table in the paper is affected?
 ```
 
 ---
