@@ -410,6 +410,49 @@ def plot_robustness_distribution(
     return fig
 
 
+def plot_feature_importance_distribution(
+    feature_importances: pd.DataFrame,
+    top_n: int = 12,
+    n_cols: int = 3,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Grid of per-feature importance histograms across the bootstrap retraining runs.
+
+    ``feature_importances`` is the long-format frame produced by
+    :func:`run_cross_section_subset_robustness` with ``collect_feature_importances=True``
+    (columns ``run_idx``, ``seed``, ``feature``, ``feature_importance``). The ``top_n``
+    features with the highest median importance are shown, each as a histogram of its
+    importance across runs with a dashed line at the median.
+    """
+    medians: pd.Series = (
+        feature_importances.groupby("feature")["feature_importance"].median().sort_values(ascending=False)
+    )
+    top_features: List[str] = list(medians.head(top_n).index)
+
+    n_rows: int = int(np.ceil(len(top_features) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 2.6 * n_rows), squeeze=False)
+
+    for idx, feature in enumerate(top_features):
+        ax = axes[idx // n_cols][idx % n_cols]
+        values: pd.Series = feature_importances.loc[
+            feature_importances["feature"] == feature, "feature_importance"
+        ]
+        ax.hist(values, bins=10, alpha=0.85)
+        ax.axvline(values.median(), color="red", linestyle="--", linewidth=1, label="Median")
+        ax.set_title(feature, fontsize=9)
+        ax.set_xlabel("Importance")
+        ax.set_ylabel("Count")
+
+    for j in range(len(top_features), n_rows * n_cols):
+        axes[j // n_cols][j % n_cols].axis("off")
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap CI plots
 # ---------------------------------------------------------------------------
