@@ -1,55 +1,9 @@
-from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta, time, datetime
 from enum import Enum
-from typing import Optional, List
+from typing import List
 
 import pandas as pd
-
-
-def get_last_day_month(date_to_round: date) -> date:
-    """Gets the last date of the month"""
-    day: int = monthrange(year=date_to_round.year, month=date_to_round.month)[1]
-    return date(year=date_to_round.year, month=date_to_round.month, day=day)
-
-
-def get_first_day_month(date_to_round: date) -> date:
-    """Returns the first day of the month"""
-    return date(year=date_to_round.year, month=date_to_round.month, day=1)
-
-
-def _convert_to_dates(dates: pd.DatetimeIndex) -> List[date]:
-    return [el.date() for el in dates]
-
-
-def get_seconds_slug(td: timedelta) -> str:
-    if td.total_seconds() < 1:
-        return f"{int(td.total_seconds() * 1000)}MS"
-    assert td.total_seconds() % 1 == 0, "Above second timedeltas must be a multiple of 1 second"
-    return f"{int(td.total_seconds())}S"
-
-
-def generate_daily_time_chunks(start_date: date, end_date: date) -> Optional[List[date]]:
-    days: List[date] = []
-
-    if start_date != get_first_day_month(start_date):
-        days.extend(
-            _convert_to_dates(
-                pd.date_range(
-                    start_date,
-                    get_last_day_month(start_date),
-                    freq="D",
-                    inclusive="both",
-                )
-            )
-        )
-
-    if end_date != get_first_day_month(end_date):
-        days.extend(
-            _convert_to_dates(pd.date_range(get_first_day_month(end_date), end_date, freq="D", inclusive="both"))
-        )
-
-    return days
 
 
 def start_of_the_day(day: date) -> datetime:
@@ -60,10 +14,6 @@ def start_of_the_day(day: date) -> datetime:
 def end_of_the_day(day: date) -> datetime:
     """Converts date to datetime with 23:59:59:9999 time"""
     return start_of_the_day(day=day) + timedelta(days=1) - timedelta(microseconds=1)
-
-
-def format_date(day: date) -> str:
-    return day.strftime("%Y%m%d")
 
 
 class NamedTimeDelta(Enum):
@@ -95,18 +45,19 @@ class Bounds:
     end_exclusive: datetime
 
     @classmethod
-    def from_datetime_str(cls, start_inclusive: str, end_exclusive: str) -> "Bounds":
-        return cls(
-            start_inclusive=datetime.strptime(start_inclusive, "%Y-%m-%d %H:%M:%S"),
-            end_exclusive=datetime.strptime(end_exclusive, "%Y-%m-%d %H:%M:%S"),
-        )
-
-    @classmethod
     def for_days(cls, start_inclusive: date, end_exclusive: date) -> "Bounds":
         """
         For instance, if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
-        Final Bounds will have the following datetime (2024-11-01 0:00:00, 2024-11-30 23:59:59)
+        Final Bounds will have the following datetime (2024-11-01 0:00:00, 2024-11-30 23:59:59.999999).
+
+        Raises ValueError when end_exclusive <= start_inclusive; an empty or inverted range is almost
+        always a caller bug and previously produced a silently inverted Bounds that yielded zero rows.
         """
+        if end_exclusive <= start_inclusive:
+            raise ValueError(
+                f"Bounds.for_days requires end_exclusive > start_inclusive; "
+                f"got start_inclusive={start_inclusive}, end_exclusive={end_exclusive}"
+            )
         return cls(
             start_inclusive=start_of_the_day(day=start_inclusive),
             end_exclusive=end_of_the_day(day=end_exclusive - timedelta(days=1)),
@@ -125,7 +76,14 @@ class Bounds:
 
     @property
     def day1(self) -> date:
-        return self.end_exclusive.date()
+        """
+        Last calendar day covered by this Bounds.
+
+        We subtract a single microsecond so exact-midnight-exclusive bounds do not accidentally
+        include the boundary day (e.g. Bounds(Nov 1 00:00, Dec 1 00:00) has day1 = Nov 30), while
+        `for_days`-shaped bounds (end_exclusive = 23:59:59.999999) still resolve to the same day.
+        """
+        return (self.end_exclusive - timedelta(microseconds=1)).date()
 
     def __str__(self) -> str:
         return (
@@ -134,7 +92,12 @@ class Bounds:
         )
 
     def generate_overlapping_bounds(self, step: timedelta, interval: timedelta) -> List["Bounds"]:
-        """Returns a list of bounds created from a parent Bounds interval with a certain interval size and step"""
+        """Returns a list of bounds created from a parent Bounds interval with a certain interval size and step.
+
+        The final sub-bound may be shorter than `interval` when the parent range is not an exact
+        multiple of `step`; callers relying on uniform-length windows should slice the parent to a
+        multiple of `step` first.
+        """
         intervals: List["Bounds"] = []
 
         lb = self.start_inclusive
@@ -157,23 +120,6 @@ class Bounds:
 
     def contain_days(self, day: date) -> bool:
         return self.day0 <= day <= self.day1
-
-    def create_offset_bounds(self, time_offset: NamedTimeDelta) -> "Bounds":
-        """Returns Bounds for the interval which is used to compute the target"""
-        return Bounds(
-            start_inclusive=self.end_exclusive,
-            end_exclusive=self.end_exclusive + time_offset.get_td(),
-        )
-
-    def expand_bounds(
-        self,
-        lb_timedelta: Optional[timedelta] = None,
-        rb_timedelta: Optional[timedelta] = None,
-    ) -> "Bounds":
-        return Bounds(
-            start_inclusive=(self.start_inclusive - lb_timedelta if lb_timedelta else self.start_inclusive),
-            end_exclusive=(self.end_exclusive + rb_timedelta if rb_timedelta else self.end_exclusive),
-        )
 
     def date_range(self):
         for dt in pd.date_range(self.day0, self.day1, freq="1D", inclusive="both"):
@@ -201,13 +147,6 @@ class Bounds:
         return months
 
     def __eq__(self, other) -> bool:
+        if not isinstance(other, Bounds):
+            return NotImplemented
         return self.start_inclusive == other.start_inclusive and self.end_exclusive == other.end_exclusive
-
-
-if __name__ == "__main__":
-    bounds: Bounds = Bounds.for_days(
-        start_inclusive=date(2024, 9, 10),
-        end_exclusive=date(2025, 2, 3),
-    )
-
-    print(bounds.generate_year_month_strings())

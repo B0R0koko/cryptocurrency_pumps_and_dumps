@@ -18,15 +18,6 @@ BINANCE_TRADE_COLS: List[str] = [
     IS_BEST_MATCH,
 ]
 
-BINANCE_TRADE_USDM_COLS: List[str] = [
-    TRADE_ID,
-    PRICE,
-    QUANTITY,
-    QUOTE_QUANTITY,
-    TRADE_TIME,
-    IS_BUYER_MAKER,
-]
-
 # Kline data example that comes from Binance API
 # [
 #   [
@@ -58,8 +49,6 @@ TAKER_BUY_BASE_ASSET_VOLUME: str = "taker_buy_base_asset_volume"
 TAKER_BUY_QUOTE_ASSET_VOLUME: str = "taker_buy_quote_asset_volume"
 _UNUSED: str = "unused"
 
-# BUY_VOL - (TOTAL_VOL - BUY_VOL)
-
 BINANCE_KLINES_COLS: List[str] = [
     OPEN_TIME,
     OPEN_PRICE,
@@ -77,5 +66,3 @@ BINANCE_KLINES_COLS: List[str] = [
 
 SYMBOL: str = "symbol"
 DATE: str = "date"
-SAMPLED_TIME: str = "sampled_time"
-MID_PRICE: str = "mid_price"

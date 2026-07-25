@@ -19,7 +19,6 @@ from backtest.utils.columns import (
     COL_PUMP_TIME,
     COL_PUMP_HASH,
     COL_PUMP_ID,
-    COL_ASSET_RETURN_RANK,
 )
 from backtest.utils.feature_set import FeatureSet
 from backtest.utils.sample import split_by_time, DatasetType, Sample
@@ -30,6 +29,11 @@ from features.FeatureWriter import REGRESSOR_OFFSETS
 
 _RAW_DATASET_CACHE: pd.DataFrame | None = None
 _PREPROCESSED_DATASETS_CACHE: Dict[str, Dict[DatasetType, pd.DataFrame]] = {}
+
+# Time-split boundaries applied to ``COL_PUMP_TIME``: TRAIN < TRAIN_END,
+# VALIDATION in [TRAIN_END, VALIDATION_END), TEST >= VALIDATION_END.
+TRAIN_END: datetime = datetime(2020, 9, 1)
+VALIDATION_END: datetime = datetime(2021, 5, 1)
 
 
 def _copy_datasets(
@@ -74,22 +78,27 @@ def cross_section_standardisation(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def remove_failed_pump_cross_sections(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop cross-sections whose pumped asset is not top-10 by 1-minute post-pump return.
+
+    Ranks are kept in a standalone Series rather than a temporary column: this function
+    now runs after ``preprocess_data``, where CatboostRanker has already created its
+    label column with the same name as ``COL_ASSET_RETURN_RANK``.
+    """
     logging.info("Removing failed pump cross sections")
     target_return_col: str = f"target_return@{NamedTimeDelta.ONE_MINUTE.get_slug()}"
-    df = df.copy()
-    df[COL_ASSET_RETURN_RANK] = df.groupby(COL_PUMP_ID, sort=False)[target_return_col].rank(
-        ascending=False, method="dense"
-    )
-    pumped_rows: pd.DataFrame = df.loc[df[COL_IS_PUMPED], [COL_PUMP_HASH, COL_ASSET_RETURN_RANK]]
-    assert pumped_rows[COL_PUMP_HASH].is_unique, "Found many pumps within one cross-section"
+    ranks: pd.Series = df.groupby(COL_PUMP_ID, sort=False)[target_return_col].rank(ascending=False, method="dense")
+    pumped_mask: pd.Series = df[COL_IS_PUMPED]
+    pumped_hashes: pd.Series = df.loc[pumped_mask, COL_PUMP_HASH]
+    assert pumped_hashes.is_unique, "Found many pumps within one cross-section"
 
     # Keep NaN ranks for parity with the previous implementation:
     # the old `pump_rank >= 10` check did not remove NaN-ranked pumps.
-    valid_mask: pd.Series = pumped_rows[COL_ASSET_RETURN_RANK].isna() | (pumped_rows[COL_ASSET_RETURN_RANK] < 10)
-    valid_pumps: pd.Series = pumped_rows.loc[valid_mask, COL_PUMP_HASH]
-    pumps_removed: int = pumped_rows.shape[0] - valid_pumps.shape[0]
+    pumped_ranks: pd.Series = ranks[pumped_mask]
+    valid_mask: pd.Series = pumped_ranks.isna() | (pumped_ranks < 10)
+    valid_pumps: pd.Series = pumped_hashes[valid_mask]
+    pumps_removed: int = pumped_hashes.shape[0] - valid_pumps.shape[0]
 
-    df = df[df[COL_PUMP_HASH].isin(valid_pumps)].reset_index(drop=True).drop(columns=[COL_ASSET_RETURN_RANK])
+    df = df[df[COL_PUMP_HASH].isin(valid_pumps)].reset_index(drop=True)
 
     if pumps_removed > 0:
         logging.warning("Removed %s failed pumps", pumps_removed)
@@ -98,13 +107,31 @@ def remove_failed_pump_cross_sections(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fillna_with_median_by_cross_section(df: pd.DataFrame, feature_set: FeatureSet) -> pd.DataFrame:
-    """Group by PUMP_HASH and fill missing values with cross-section median values"""
+    """Group by PUMP_HASH and fill missing values with cross-section median values.
+
+    The global fallback medians used when an entire cross-section is NaN are computed
+    from train-period rows only (``COL_PUMP_TIME < TRAIN_END``). Using train rows as
+    the source of the global prior avoids leaking validation/test information into
+    the imputation step.
+
+    Some regressor columns can be entirely NaN across the whole panel (e.g. the
+    5MIN / 15MIN z-scores under the T - 15min feature cutoff, where no full
+    hourly bar fits inside the sub-hour window). When that happens both the
+    cross-section median and the global-train median are NaN. To keep the
+    downstream sklearn estimators happy (they refuse NaN inputs) we fall back
+    to 0.0 for the residual, which is neutral under the downstream cross-
+    sectional standardisation (Eq. ~cs\\_standardization) — a filled-with-mean
+    column becomes a zero column after standardisation and cannot inject
+    signal.
+    """
     regressors: List[str] = feature_set.regressors
-    global_medians: pd.Series = df[regressors].median()
+    train_mask: pd.Series = df[COL_PUMP_TIME] < TRAIN_END
+    train_source: pd.DataFrame = df.loc[train_mask, regressors] if train_mask.any() else df[regressors]
+    global_medians: pd.Series = train_source.median()
     cross_section_medians: pd.DataFrame = df.groupby(COL_PUMP_HASH, sort=False)[regressors].transform("median")
 
     df_nonans: pd.DataFrame = df.copy()
-    df_nonans[regressors] = df_nonans[regressors].fillna(cross_section_medians).fillna(global_medians)
+    df_nonans[regressors] = df_nonans[regressors].fillna(cross_section_medians).fillna(global_medians).fillna(0.0)
 
     logging.info("Nans\n%s", df_nonans[regressors].isna().sum().sort_values(ascending=False))
     return df_nonans
@@ -121,9 +148,15 @@ class BasePipeline(ABC):
     def create_sample(self) -> Sample: ...
 
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Define all data preprocessing steps here"""
+        """Define all data preprocessing steps here.
+
+        Note on survivorship filtering: ``remove_failed_pump_cross_sections`` is
+        applied AFTER the time split, and only to the TRAIN slice, inside
+        :meth:`build_datasets`. This step relies on the post-pump ``target_return``
+        label and dropping "failed" pumps from validation/test would silently
+        overstate reported metrics.
+        """
         df = add_col_pump_id(df=df)
-        df = remove_failed_pump_cross_sections(df=df)
         powerlaw_cols: List[str] = FeatureType.POWERLAW_ALPHA.col_names(offsets=REGRESSOR_OFFSETS)
         df[powerlaw_cols] = df[powerlaw_cols].clip(1, 2)
         df_scaled: pd.DataFrame = cross_section_standardisation(df=df)
@@ -140,10 +173,15 @@ class BasePipeline(ABC):
         df = self.preprocess_data(df=df)
         datasets: Dict[DatasetType, pd.DataFrame] = split_by_time(
             df=df,
-            time_bins=[datetime(2020, 9, 1), datetime(2021, 5, 1)],
+            time_bins=[TRAIN_END, VALIDATION_END],
             names=[DatasetType.TRAIN, DatasetType.VALIDATION, DatasetType.TEST],
             time_col=COL_PUMP_TIME,
         )
+        # Survivorship filter is applied to TRAIN only: it uses a post-pump label,
+        # so dropping "failed" cross-sections from validation/test would inflate
+        # reported metrics.
+        train_df: pd.DataFrame = datasets[DatasetType.TRAIN]
+        datasets[DatasetType.TRAIN] = remove_failed_pump_cross_sections(df=train_df).reset_index(drop=True)
         for ds_type, dataset in datasets.items():
             logging.info("Dataset %s. Shape %s", ds_type, dataset.shape)
 
@@ -162,9 +200,15 @@ class BasePipeline(ABC):
     def build_model(self) -> BaseModel: ...
 
     @abstractmethod
-    def optimize_parameters(self): ...
+    def optimize_parameters(self, n_trials: int = 100): ...
 
     def optimize_portfolio_strategy(self) -> None:
+        """Tune portfolio timing / top-k size against the VALIDATION split.
+
+        The Optuna objective :func:`portfolio_pnl_objective` evaluates each candidate
+        configuration on ``DatasetType.VALIDATION``. The TEST split is never touched
+        during tuning; it is reserved for final reported PnL.
+        """
         sample: Sample = self.create_sample()
         model: ImplementsRank = self.train(sample=sample)
         study: Study = create_study(study_name="TOPKPortfolioStrategy", start_new=False)

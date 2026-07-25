@@ -2,9 +2,13 @@ from pathlib import Path
 
 
 def get_root_dir() -> Path:
-    directory = Path().absolute()
+    start: Path = Path().absolute()
+    directory: Path = start
     while not directory.joinpath("pyproject.toml").exists():
-        directory = directory.parents[0]
+        parent: Path = directory.parent
+        if parent == directory:
+            raise RuntimeError(f"pyproject.toml not found above {start}")
+        directory = parent
     return directory
 
 

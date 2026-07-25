@@ -142,8 +142,8 @@ class PortfolioStats:
         for tx in self.txs:
             if tx.is_empty() or tx.entry_filled_notional_usdt is None:
                 continue
-            total_executed_notional_usdt += (
-                float(self.portfolio.get_weight(tx.currency_pair)) * float(tx.entry_filled_notional_usdt)
+            total_executed_notional_usdt += float(self.portfolio.get_weight(tx.currency_pair)) * float(
+                tx.entry_filled_notional_usdt
             )
         return total_executed_notional_usdt
 

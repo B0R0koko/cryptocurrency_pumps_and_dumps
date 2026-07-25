@@ -6,9 +6,7 @@ from backtest.portfolio.BasePortfolio import Portfolio, PortfolioStats, Transact
 from backtest.portfolio.PriceImpact import PriceImpactModel, fit_price_impact_model, fit_price_impact_model_from_klines
 from backtest.portfolio.TOPKPortfolio import TOPKPortfolio, evaluate_topk_pnl_for_quantities, portfolio_pnl_objective
 from backtest.portfolio.config import PortfolioExecutionConfig
-from backtest.portfolio.execution_engine import ExecutionEngine
 from backtest.portfolio.impact_provider import LookbackImpactModelProvider
-from backtest.portfolio.kline_loader import MinuteKlineLoader
 from backtest.portfolio.models import ExecutionResult, OrderIntent
 from backtest.portfolio.manipulated_impact_provider import ManipulatedImpactModelProvider
 from backtest.portfolio.pnl import PnLCalculator, USDTPnLCalculator
@@ -25,10 +23,8 @@ __all__ = [
     "Transaction",
     "OrderIntent",
     "ExecutionResult",
-    "ExecutionEngine",
     "PriceImpactModel",
     "LookbackImpactModelProvider",
-    "MinuteKlineLoader",
     "ManipulatedImpactModelProvider",
     "NotionalSizer",
     "PnLCalculator",

@@ -4,7 +4,16 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import lsq_linear
 
-from core.columns import CLOSE_PRICE, IS_BUYER_MAKER, OPEN_TIME, PRICE, QUANTITY, QUOTE_ASSET_VOLUME, TAKER_BUY_QUOTE_ASSET_VOLUME, TRADE_TIME
+from core.columns import (
+    CLOSE_PRICE,
+    IS_BUYER_MAKER,
+    OPEN_TIME,
+    PRICE,
+    QUANTITY,
+    QUOTE_ASSET_VOLUME,
+    TAKER_BUY_QUOTE_ASSET_VOLUME,
+    TRADE_TIME,
+)
 
 
 def _fit_sqrt_regression(notionals: np.ndarray, impacts: np.ndarray) -> float:
@@ -187,10 +196,6 @@ def trades_to_klines(trades: pd.DataFrame, freq: str = "5min") -> pd.DataFrame:
     return resampled.reset_index()
 
 
-# Backward-compatible alias
-trades_to_1m_klines = trades_to_klines
-
-
 def aggregate_klines_to_samples(
     klines: pd.DataFrame,
     quote_to_usdt: float = 1.0,
@@ -224,32 +229,31 @@ def aggregate_klines_to_samples(
     net_buy_volume = 2 * df[TAKER_BUY_QUOTE_ASSET_VOLUME] - df[QUOTE_ASSET_VOLUME]
     price_return_bps = (df[CLOSE_PRICE] / prev_close - 1.0) * 1e4
 
-    # Drop first row (no previous close) and zero net volume rows
+    # Drop first row (no previous close) and zero net volume rows.
     valid = prev_close.notna() & (prev_close > 0) & (net_buy_volume != 0)
     df = df[valid].copy()
     net_buy_volume = net_buy_volume[valid]
     price_return_bps = price_return_bps[valid]
+    prev_close = prev_close[valid]
 
     df["side"] = np.where(net_buy_volume > 0, 1, -1)
 
     if sell_only:
         sell_mask = df["side"] == -1
         df = df[sell_mask].copy()
-        net_buy_volume = net_buy_volume[valid][sell_mask]
-        price_return_bps = price_return_bps[valid][sell_mask]
-        prev_close_vals = prev_close[valid][sell_mask].values
-    else:
-        prev_close_vals = prev_close[valid].values
+        net_buy_volume = net_buy_volume[sell_mask]
+        price_return_bps = price_return_bps[sell_mask]
+        prev_close = prev_close[sell_mask]
 
     if df.empty:
         return _empty_impact_samples()
 
     df["notional_quote"] = np.abs(net_buy_volume.values)
     df["notional_usdt"] = df["notional_quote"] * quote_to_usdt
-    # Absolute impact: take abs of price return regardless of side
+    # Absolute impact: take abs of price return regardless of side.
     df["impact_bps"] = np.abs(price_return_bps.values)
     df["trade_time"] = df[OPEN_TIME]
-    df["price_first"] = prev_close_vals
+    df["price_first"] = prev_close.values
     df["price_last"] = df[CLOSE_PRICE].values
 
     return df[_IMPACT_SAMPLE_COLUMNS].reset_index(drop=True)
@@ -301,10 +305,12 @@ def _fit_from_samples(
 ) -> PriceImpactFitResult:
     if samples.empty:
         empty = _empty_price_impact_model(quote_to_usdt=quote_to_usdt, sample_frequency=sample_frequency)
-        diagnostics = pd.DataFrame([
-            _side_diagnostics("buy", 0, 0.0, 0.0),
-            _side_diagnostics("sell", 0, 0.0, 0.0),
-        ])
+        diagnostics = pd.DataFrame(
+            [
+                _side_diagnostics("buy", 0, 0.0, 0.0),
+                _side_diagnostics("sell", 0, 0.0, 0.0),
+            ]
+        )
         return PriceImpactFitResult(model=empty, samples=samples, diagnostics=diagnostics)
 
     # Pool both sides and fit a single regression: I(Q) = beta * sqrt(Q)
@@ -316,8 +322,18 @@ def _fit_from_samples(
     buy_df = samples[samples["side"] == 1]
     sell_df = samples[samples["side"] == -1]
 
-    buy_diag = _side_diagnostics("buy", len(buy_df), float(buy_df["impact_bps"].median()) if len(buy_df) > 0 else 0.0, float(buy_df["impact_bps"].max()) if len(buy_df) > 0 else 0.0)
-    sell_diag = _side_diagnostics("sell", len(sell_df), float(sell_df["impact_bps"].median()) if len(sell_df) > 0 else 0.0, float(sell_df["impact_bps"].max()) if len(sell_df) > 0 else 0.0)
+    buy_diag = _side_diagnostics(
+        "buy",
+        len(buy_df),
+        float(buy_df["impact_bps"].median()) if len(buy_df) > 0 else 0.0,
+        float(buy_df["impact_bps"].max()) if len(buy_df) > 0 else 0.0,
+    )
+    sell_diag = _side_diagnostics(
+        "sell",
+        len(sell_df),
+        float(sell_df["impact_bps"].median()) if len(sell_df) > 0 else 0.0,
+        float(sell_df["impact_bps"].max()) if len(sell_df) > 0 else 0.0,
+    )
     buy_diag["beta"] = beta
     sell_diag["beta"] = beta
 

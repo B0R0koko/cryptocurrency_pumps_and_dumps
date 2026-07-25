@@ -68,44 +68,54 @@ def _build_synthetic_trades(num_orders: int = 80) -> pd.DataFrame:
             # Buy-initiated: price moves up across fills
             end_price = base_price * (1 + impact_bps / 1e4)
             # Split into 2 fills
-            rows.append({
-                TRADE_TIME: ts,
-                PRICE: base_price,
-                QUANTITY: quantity * 0.6,
-                IS_BUYER_MAKER: False,  # taker buy
-            })
-            rows.append({
-                TRADE_TIME: ts,
-                PRICE: end_price,
-                QUANTITY: quantity * 0.4,
-                IS_BUYER_MAKER: False,  # taker buy
-            })
+            rows.append(
+                {
+                    TRADE_TIME: ts,
+                    PRICE: base_price,
+                    QUANTITY: quantity * 0.6,
+                    IS_BUYER_MAKER: False,  # taker buy
+                }
+            )
+            rows.append(
+                {
+                    TRADE_TIME: ts,
+                    PRICE: end_price,
+                    QUANTITY: quantity * 0.4,
+                    IS_BUYER_MAKER: False,  # taker buy
+                }
+            )
         else:
             # Sell-initiated: price moves down across fills
             end_price = base_price * (1 - impact_bps / 1e4)
-            rows.append({
-                TRADE_TIME: ts,
-                PRICE: base_price,
-                QUANTITY: quantity * 0.5,
-                IS_BUYER_MAKER: True,  # taker sell
-            })
-            rows.append({
-                TRADE_TIME: ts,
-                PRICE: end_price,
-                QUANTITY: quantity * 0.5,
-                IS_BUYER_MAKER: True,  # taker sell
-            })
+            rows.append(
+                {
+                    TRADE_TIME: ts,
+                    PRICE: base_price,
+                    QUANTITY: quantity * 0.5,
+                    IS_BUYER_MAKER: True,  # taker sell
+                }
+            )
+            rows.append(
+                {
+                    TRADE_TIME: ts,
+                    PRICE: end_price,
+                    QUANTITY: quantity * 0.5,
+                    IS_BUYER_MAKER: True,  # taker sell
+                }
+            )
 
     return pd.DataFrame(rows)
 
 
 def test_aggregate_trades_to_orders_classifies_buy_and_sell() -> None:
-    trades = pd.DataFrame([
-        {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 0), PRICE: 100.0, QUANTITY: 1.0, IS_BUYER_MAKER: False},
-        {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 0), PRICE: 101.0, QUANTITY: 1.0, IS_BUYER_MAKER: False},
-        {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 1), PRICE: 100.0, QUANTITY: 1.0, IS_BUYER_MAKER: True},
-        {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 1), PRICE: 99.0, QUANTITY: 1.0, IS_BUYER_MAKER: True},
-    ])
+    trades = pd.DataFrame(
+        [
+            {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 0), PRICE: 100.0, QUANTITY: 1.0, IS_BUYER_MAKER: False},
+            {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 0), PRICE: 101.0, QUANTITY: 1.0, IS_BUYER_MAKER: False},
+            {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 1), PRICE: 100.0, QUANTITY: 1.0, IS_BUYER_MAKER: True},
+            {TRADE_TIME: datetime(2021, 1, 1, 0, 0, 1), PRICE: 99.0, QUANTITY: 1.0, IS_BUYER_MAKER: True},
+        ]
+    )
 
     orders = aggregate_trades_to_orders(trades, quote_to_usdt=2.0)
 

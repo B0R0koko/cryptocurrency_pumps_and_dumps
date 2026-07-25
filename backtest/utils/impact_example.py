@@ -89,7 +89,9 @@ def find_best_impact_example(
             q2u = 1.0
 
         result = fit_price_impact_model_from_klines_with_diagnostics(
-            klines=klines, quote_to_usdt=q2u, sample_frequency="5min",
+            klines=klines,
+            quote_to_usdt=q2u,
+            sample_frequency="5min",
         )
         diag = result.diagnostics.set_index("side")
         buy_n = int(diag.loc["buy", "num_samples"]) if "buy" in diag.index else 0
@@ -146,7 +148,10 @@ def find_best_exit_impact_example(
             q2u = 1.0
 
         result = fit_price_impact_model_from_klines_with_diagnostics(
-            klines=klines, quote_to_usdt=q2u, sell_only=True, sample_frequency="5s",
+            klines=klines,
+            quote_to_usdt=q2u,
+            sell_only=True,
+            sample_frequency="5s",
         )
 
         n_samples = len(result.samples)

@@ -1,6 +1,6 @@
 import os
 from bisect import bisect_left
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from multiprocessing import Pool, RLock
 from multiprocessing.pool import AsyncResult
@@ -42,18 +42,13 @@ DECAY_OFFSETS: List[NamedTimeDelta] = [
     NamedTimeDelta.FIVE_MINUTES,
 ]
 
-
-def compute_number_of_prev_pumps(
-    currency_pair: CurrencyPair, pump_event: PumpEvent, pump_events: List[PumpEvent]
-) -> int:
-    """Compute number of times the same currency_pair was pumped before our current PumpEvent"""
-    count: int = 0
-    for prev_pump in pump_events:
-        # if the current currency_pair has been pumped before, and it was done before current cross-section pump time
-        if currency_pair == prev_pump.currency_pair and prev_pump.time < pump_event.time:
-            count += 1
-
-    return count
+# Decision lag between the last trade a feature is allowed to see and the pump
+# announcement time. The portfolio enters at ``T - DECISION_LAG`` (see
+# ``TOPKPortfolio.buy_before``); features must reflect strictly the information
+# available at that entry time. The interval ``[T - DECISION_LAG, T]`` must
+# never contribute to any feature. Changing this constant requires regenerating
+# all feature parquets from raw trades.
+DECISION_LAG: timedelta = timedelta(minutes=15)
 
 
 def get_currency_pairs(bounds: Bounds) -> List[CurrencyPair]:
@@ -79,12 +74,17 @@ class PumpsFeatureWriter:
         self._hive: pl.LazyFrame = pl.scan_parquet(Exchange.BINANCE_SPOT.get_hive_location(), hive_partitioning=True)
 
     def load_data_for_currency_pair(self, bounds: Bounds, currency_pair: CurrencyPair) -> pl.DataFrame:
-        """Load data for currency from HiveDataset"""
+        """Load data for currency from HiveDataset.
+
+        ``bounds.end_exclusive`` is treated as exclusive on both the date and
+        trade-time predicates via ``closed="left"``, matching the contract of
+        :class:`Bounds`.
+        """
         return (
             self._hive.filter(
                 (pl.col(SYMBOL) == currency_pair.name)
                 & (pl.col(DATE).is_between(bounds.day0, bounds.day1))
-                & (pl.col(TRADE_TIME).is_between(bounds.start_inclusive, bounds.end_exclusive))
+                & (pl.col(TRADE_TIME).is_between(bounds.start_inclusive, bounds.end_exclusive, closed="left"))
             )
             .collect()
             .sort(by=TRADE_TIME)
@@ -129,29 +129,83 @@ class PumpsFeatureWriter:
         return bisect_left(pump_times, pump_event.time)
 
     def compute_features(self, df: pl.DataFrame, currency_pair: CurrencyPair, pump_event: PumpEvent) -> Dict[str, Any]:
+        """Compute the regressor and target features for one currency pair.
+
+        Feature-window semantics
+        ------------------------
+        All regressor features are computed from data strictly available at the
+        portfolio entry time ``rb = pump_event.time - DECISION_LAG``. No trade
+        with ``TRADE_TIME >= rb`` contributes to any feature, so the interval
+        ``[T - DECISION_LAG, T]`` is by construction excluded. The in-window
+        features (return, flow imbalance, slippage, powerlaw alpha, etc.) run
+        on trades filtered with ``TRADE_TIME in [lb, rb)`` (left-closed).
+
+        Z-score normaliser geometry (rb-anchored hourly bars)
+        -----------------------------------------------------
+        The z-score normalisers are computed on hourly bars anchored at ``rb``
+        rather than at calendar hour boundaries. Bar ``k`` (k >= 0) covers
+        ``[rb - (k+1)*1h, rb - k*1h)``; the newest bar ``k = 0`` ends exactly at
+        ``rb``. By construction every bar is a full hour of pre-rb data and no
+        bar can overlap ``[rb, T]``.
+
+        This anchoring is implemented via ``group_by_dynamic(every=1h,
+        period=1h, offset=<rb-mod-1h>)`` on the strictly-pre-rb trades, with the
+        offset chosen so the polars bin boundaries fall on ``..., rb - 2h,
+        rb - 1h, rb``. When ``rb`` is on the calendar hour the offset is zero;
+        when ``rb`` is at ``HH:MM:SS.uuu`` the offset is ``MM*60 + SS + uuu/1e6``
+        seconds so bar edges land on the ``:MM:SS.uuu`` grid.
+
+        In-window numerators share the same rb-anchored bars: for a feature
+        offset ``X`` the z-score numerator averages over the newest
+        ``ceil(X / 1h)`` bars (i.e. bars covering ``[rb - ceil(X/1h)*1h, rb)``,
+        the smallest union that contains ``[rb - X, rb)``). This guarantees
+        short-offset z-scores (``5MIN``, ``15MIN``, ``1H``) are non-NaN whenever
+        the newest bar carries any trades, and it keeps the numerator and the
+        std/mean denominators on one grid.
+
+        Note: on-disk features from earlier runs (calendar-anchored bars) are
+        NOT equivalent and must be regenerated end-to-end.
+        """
         features: Dict[str, Any] = {}
         window: NamedTimeDelta
+        one_hour: timedelta = timedelta(hours=1)
 
-        df_hourly: pl.DataFrame = df.group_by_dynamic(
+        rb: datetime = pump_event.time - DECISION_LAG
+
+        # Truncate trades to strictly-pre-rb, then aggregate into hourly bars
+        # anchored so the newest bar ends exactly at rb.
+        df_pre_rb: pl.DataFrame = df.filter(pl.col(TRADE_TIME) < rb)
+        offset_us: int = (rb.minute * 60 + rb.second) * 1_000_000 + rb.microsecond
+        df_hourly: pl.DataFrame = df_pre_rb.group_by_dynamic(
             index_column=TRADE_TIME,
-            period=timedelta(hours=1),
-            every=timedelta(hours=1),
+            period=one_hour,
+            every=one_hour,
+            offset=f"{offset_us}us",
         ).agg(
             asset_return_pips=(pl.col("price_last").last() / pl.col("price_first").first() - 1) * 1e4,
             quote_abs=pl.col("quote_abs").sum(),
         )
-        asset_return_std: float = df_hourly.select(pl.col("asset_return_pips").std()).item()
-
-        quote_abs_mean: float = df_hourly.select(pl.col("quote_abs").mean()).item()
-        quote_abs_std: float = df_hourly.select(pl.col("quote_abs").std()).item()
-
-        rb: datetime = pump_event.time - timedelta(hours=1)
+        # Belt-and-braces: drop any bar whose right edge extends past rb.
+        # After the strict pre-rb truncation this should be empty, but the
+        # invariant is cheap and makes downstream code auditable.
+        df_hourly_full: pl.DataFrame = df_hourly.filter(pl.col(TRADE_TIME) + pl.duration(hours=1) <= rb)
+        asset_return_std: float = df_hourly_full.select(pl.col("asset_return_pips").std()).item()
+        quote_abs_mean: float = df_hourly_full.select(pl.col("quote_abs").mean()).item()
+        quote_abs_std: float = df_hourly_full.select(pl.col("quote_abs").std()).item()
 
         for window in REGRESSOR_OFFSETS:
-            # Compute using data 1 hour prior to the pump
+            # Feature window ``[lb, rb)`` — left-closed / right-open so trades
+            # at exactly ``rb`` (the portfolio entry time) do not leak into any
+            # feature.
             lb: datetime = rb - window.get_td()
-            df_filtered: pl.DataFrame = df.filter(pl.col(TRADE_TIME).is_between(lb, rb))
-            df_hourly_filtered: pl.DataFrame = df_hourly.filter(pl.col(TRADE_TIME).is_between(lb, rb))
+            df_filtered: pl.DataFrame = df.filter(pl.col(TRADE_TIME).is_between(lb, rb, closed="left"))
+
+            # Z-score numerator: newest ``ceil(offset / 1h)`` rb-anchored bars.
+            # For offset < 1h this is a single bar (the newest); for offset >= 1h
+            # it grows one bar per hour of coverage.
+            n_bars_needed: int = -(-int(window.get_td().total_seconds()) // int(one_hour.total_seconds()))
+            hourly_lb: datetime = rb - one_hour * n_bars_needed
+            df_hourly_filtered: pl.DataFrame = df_hourly_full.filter(pl.col(TRADE_TIME) >= hourly_lb)
 
             window_values: Dict[str, Any] = df_filtered.select(
                 compute_return().alias("asset_return"),
@@ -268,10 +322,15 @@ class PumpsFeatureWriter:
 
 
 def main():
+    import argparse
+
     configure_logging()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cpu-count", type=int, default=16)
+    args = parser.parse_args()
     pump_events: List[PumpEvent] = load_pumps(path=get_root_dir() / "resources/pumps.json")
     writer = PumpsFeatureWriter(pump_events=pump_events)
-    writer.run_parallel(cpu_count=10)
+    writer.run_parallel(cpu_count=args.cpu_count)
 
 
 if __name__ == "__main__":

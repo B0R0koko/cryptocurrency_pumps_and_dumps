@@ -17,53 +17,64 @@ from sklearn.metrics import (
 def calculate_topk(model: ImplementsRank, dataset: Dataset, bins: Iterable[float]) -> pd.Series:
     """
     :param bins: bins used to calculate topk
-    :return: pd.Series with topk values. Which measures the chance of predicting the actual pump given we take a portfolio
-    of size K
+    :return: pd.Series with TOPK accuracy per bin. The value at ``K`` is the share of
+        pump-carrying cross-sections whose top-K assets (ranked by model score) contain
+        the pumped asset. The denominator is the number of cross-sections that contain
+        at least one pumped row, not the number of pumped rows.
     """
     probas_pred: np.ndarray = model.rank(dataset=dataset)
-    _df: pd.DataFrame = dataset.all_data()
+    _df: pd.DataFrame = dataset.all_data().copy()
     _df[COL_PROBAS_PRED] = probas_pred
 
     count_by_bins: Dict[float, int] = {}
+    num_cross_sections_with_pump: int = 0
 
     for pump_hash, df_cross_section in _df.groupby(COL_PUMP_HASH):
+        if not df_cross_section[COL_IS_PUMPED].any():
+            continue
+        num_cross_sections_with_pump += 1
         df_cross_section = df_cross_section.sort_values(by=COL_PROBAS_PRED, ascending=False).reset_index(drop=True)
         for K in bins:
             contains_pump: bool = df_cross_section.iloc[:K][COL_IS_PUMPED].any()
-            count_by_bins[K] = count_by_bins.get(K, 0) + contains_pump
-
-    num_pumped: int = _df[_df[COL_IS_PUMPED] == True].shape[0]
+            count_by_bins[K] = count_by_bins.get(K, 0) + int(contains_pump)
 
     counts = np.array(list(count_by_bins.values()))
+    if num_cross_sections_with_pump == 0:
+        return pd.Series(data=np.zeros(len(counts)), index=list(bins))
 
-    return pd.Series(data=counts / num_pumped, index=bins)
+    return pd.Series(data=counts / num_cross_sections_with_pump, index=list(bins))
 
 
 def calculate_topk_percent(model: ImplementsRank, dataset: Dataset, bins: Iterable[float]) -> pd.Series:
     """
     :param bins: bins used to calculate topk. K measures the share of cross-section taken as a portfolio
-    :return: pd.Series with topk% values. Which measures the chance of predicting the actual pump given we take a portfolio
-    of size of K% of the whole cross-section
+    :return: pd.Series with TOPKP accuracy per bin. The denominator is the number of
+        cross-sections that contain at least one pumped row.
     """
     probas_pred: np.ndarray = model.rank(dataset=dataset)
-    _df: pd.DataFrame = dataset.all_data()
+    _df: pd.DataFrame = dataset.all_data().copy()
     _df[COL_PROBAS_PRED] = probas_pred
 
     count_by_bins: Dict[float, int] = {}
+    num_cross_sections_with_pump: int = 0
 
     for pump_hash, df_cross_section in _df.groupby(COL_PUMP_HASH):
+        if not df_cross_section[COL_IS_PUMPED].any():
+            continue
+        num_cross_sections_with_pump += 1
         df_cross_section = df_cross_section.sort_values(by=COL_PROBAS_PRED, ascending=False)
         n_rows = len(df_cross_section)
 
         for pct_bin in bins:
             k: int = int(np.ceil(n_rows * pct_bin))
             contains_pump: bool = df_cross_section.iloc[:k][COL_IS_PUMPED].any() if k > 0 else False
-            count_by_bins[pct_bin] = count_by_bins.get(pct_bin, 0) + contains_pump
+            count_by_bins[pct_bin] = count_by_bins.get(pct_bin, 0) + int(contains_pump)
 
-    num_pumped: int = _df[_df[COL_IS_PUMPED] == True].shape[0]
     counts = np.array(list(count_by_bins.values()))
+    if num_cross_sections_with_pump == 0:
+        return pd.Series(data=np.zeros(len(counts)), index=list(bins))
 
-    return pd.Series(data=counts / num_pumped, index=bins)
+    return pd.Series(data=counts / num_cross_sections_with_pump, index=list(bins))
 
 
 def calculate_topk_percent_auc(
@@ -73,7 +84,7 @@ def calculate_topk_percent_auc(
     step: float = 0.005,
 ) -> float:
     """
-    Compute the area under the Top@K% accuracy curve over ``K% in (0, max_k_percent]`` and
+    Compute the area under the TOPKP accuracy curve over ``K% in (0, max_k_percent]`` (TOPKAUC) and
     normalise by the integration range so the result stays in ``(0, 1)``.
 
     Restricting the range to the steep, low-K% region (default 0-20%) makes the metric

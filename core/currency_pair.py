@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ from typing import List, Dict, Any, Optional
 import requests
 
 from core.time_utils import Bounds
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,19 +41,19 @@ class CurrencyPair:
 
 def collect_all_spot_currency_pairs() -> List[CurrencyPair]:
     """Collect a set of all CurrencyPairs traded on Binance"""
-    resp = requests.get("https://api.binance.com/api/v3/exchangeInfo")
-    data: Dict[str, Any] = resp.json()
-    return [CurrencyPair(base=entry["baseAsset"], term=entry["quoteAsset"]) for entry in data["symbols"]]
-
-
-def collect_all_usdm_currency_pairs() -> List[CurrencyPair]:
-    """Collect a set of all CurrencyPairs traded on BINANCE_USDM"""
-    resp = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo")
+    resp = requests.get("https://api.binance.com/api/v3/exchangeInfo", timeout=30)
+    resp.raise_for_status()
     data: Dict[str, Any] = resp.json()
     return [CurrencyPair(base=entry["baseAsset"], term=entry["quoteAsset"]) for entry in data["symbols"]]
 
 
 def get_cross_section_currencies(hive_dir: Path, bounds: Bounds) -> List[CurrencyPair]:
+    """Collect the union of currency pairs present under `date=YYYY-MM-DD` partitions matching `bounds`.
+
+    Entries in the date-partition directory that do not follow the `symbol=<PAIR>` naming convention
+    (pyarrow metadata files, `.DS_Store`, checksums, etc.) are skipped with a warning rather than
+    raising, so a stray file cannot brick the feature pipeline.
+    """
     matched_dirs: List[str] = []
 
     for directory in os.listdir(hive_dir):
@@ -67,9 +70,14 @@ def get_cross_section_currencies(hive_dir: Path, bounds: Bounds) -> List[Currenc
     all_currency_pairs: set[CurrencyPair] = set()
 
     for directory in matched_dirs:
-        symbol_directories: List[str] = os.listdir(hive_dir.joinpath(directory))
-        all_currency_pairs |= set(
-            CurrencyPair.from_string(symbol=directory.split("=")[1]) for directory in symbol_directories
-        )
+        for symbol_dir in os.listdir(hive_dir.joinpath(directory)):
+            parts: List[str] = symbol_dir.split("=", 1)
+            if len(parts) != 2 or parts[0] != "symbol":
+                _log.warning("Skipping non-symbol entry under %s: %s", directory, symbol_dir)
+                continue
+            try:
+                all_currency_pairs.add(CurrencyPair.from_string(symbol=parts[1]))
+            except ValueError:
+                _log.warning("Skipping entry under %s with unparseable pair: %s", directory, symbol_dir)
 
     return list(all_currency_pairs)

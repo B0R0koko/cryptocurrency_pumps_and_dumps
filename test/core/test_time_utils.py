@@ -1,5 +1,7 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List
+
+import pytest
 
 from core.time_utils import Bounds
 
@@ -23,3 +25,69 @@ def test_bounds_generate_overlapping_bounds():
 
     for sub_bound, expected in zip(sub_bounds, expected_bounds):
         assert sub_bound == expected, f"Generated {str(sub_bound)} and expected {str(expected)} bounds do not match"
+
+
+def test_for_days_rejects_equal_start_and_end():
+    """for_days used to silently produce an inverted Bounds when start == end, yielding zero rows."""
+    with pytest.raises(ValueError):
+        Bounds.for_days(date(2025, 1, 1), date(2025, 1, 1))
+
+
+def test_for_days_rejects_inverted_range():
+    with pytest.raises(ValueError):
+        Bounds.for_days(date(2025, 1, 2), date(2025, 1, 1))
+
+
+def test_for_days_end_exclusive_semantics_preserved():
+    """`for_days` still encodes end_exclusive as 23:59:59.999999 of the previous day."""
+    bounds: Bounds = Bounds.for_days(date(2025, 1, 1), date(2025, 1, 2))
+    assert bounds.start_inclusive == datetime(2025, 1, 1, 0, 0, 0)
+    assert bounds.end_exclusive == datetime(2025, 1, 1, 23, 59, 59, 999999)
+    assert bounds.day0 == date(2025, 1, 1)
+    assert bounds.day1 == date(2025, 1, 1)
+
+
+def test_midnight_exclusive_bounds_do_not_include_boundary_day():
+    """Genuinely exclusive midnight bounds must exclude the boundary day from contain_days."""
+    bounds: Bounds = Bounds(
+        start_inclusive=datetime(2024, 11, 1, 0, 0, 0),
+        end_exclusive=datetime(2024, 12, 1, 0, 0, 0),
+    )
+    assert bounds.contain_days(date(2024, 11, 1))
+    assert bounds.contain_days(date(2024, 11, 30))
+    assert not bounds.contain_days(date(2024, 12, 1))
+
+
+def test_midnight_exclusive_bounds_date_range_stops_before_boundary():
+    bounds: Bounds = Bounds(
+        start_inclusive=datetime(2024, 11, 28, 0, 0, 0),
+        end_exclusive=datetime(2024, 12, 1, 0, 0, 0),
+    )
+    assert list(bounds.date_range()) == [date(2024, 11, 28), date(2024, 11, 29), date(2024, 11, 30)]
+
+
+def test_midnight_exclusive_bounds_year_month_strings_stops_before_boundary():
+    bounds: Bounds = Bounds(
+        start_inclusive=datetime(2024, 11, 1, 0, 0, 0),
+        end_exclusive=datetime(2024, 12, 1, 0, 0, 0),
+    )
+    assert bounds.generate_year_month_strings() == ["202411"]
+
+
+def test_for_days_year_month_strings_matches_existing_docstring_examples():
+    """The generate_year_month_strings examples in the docstring must keep working."""
+    assert Bounds.for_days(date(2025, 1, 1), date(2025, 3, 1)).generate_year_month_strings() == ["202501", "202502"]
+    assert Bounds.for_days(date(2025, 1, 1), date(2025, 3, 2)).generate_year_month_strings() == [
+        "202501",
+        "202502",
+        "202503",
+    ]
+
+
+def test_bounds_eq_returns_notimplemented_for_non_bounds():
+    bounds: Bounds = Bounds.for_days(date(2025, 1, 1), date(2025, 1, 2))
+    # `bounds == other` should not crash on unrelated types and must not accidentally treat them
+    # as equal. NotImplemented lets Python fall back to identity comparison, which is False here.
+    assert bounds != 5
+    assert bounds != "not a bounds"
+    assert bounds.__eq__(5) is NotImplemented

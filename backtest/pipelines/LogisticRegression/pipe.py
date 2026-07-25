@@ -12,7 +12,6 @@ from backtest.pipelines.BasePipeline import (
     BasePipeline,
     cross_section_standardisation,
     fillna_with_median_by_cross_section,
-    remove_failed_pump_cross_sections,
     add_col_pump_id,
 )
 from backtest.pipelines.LogisticRegression.model import LogisticRegressionModel
@@ -44,8 +43,8 @@ def _objective(trial: Trial, sample: Sample) -> float:
     model.train(sample=sample)
 
     val: Dataset = sample.get_dataset(ds_type=DatasetType.VALIDATION)
-    topkauc: float = calculate_topk_percent_auc(model=model, dataset=val)
-    return topkauc
+    topkpauc: float = calculate_topk_percent_auc(model=model, dataset=val)
+    return topkpauc
 
 
 class LogisticRegressionPipeline(BasePipeline):
@@ -55,9 +54,12 @@ class LogisticRegressionPipeline(BasePipeline):
 
     @overrides
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Define all data preprocessing steps here"""
+        """Define all data preprocessing steps here.
+
+        Survivorship filtering is applied to the TRAIN split only in
+        :meth:`BasePipeline.build_datasets`.
+        """
         df = add_col_pump_id(df=df)
-        df = remove_failed_pump_cross_sections(df=df)
         powerlaw_cols: List[str] = FeatureType.POWERLAW_ALPHA.col_names(offsets=REGRESSOR_OFFSETS)
         df[powerlaw_cols] = df[powerlaw_cols].clip(1, 2)
         df = fillna_with_median_by_cross_section(df=df, feature_set=self.feature_set)
@@ -82,11 +84,11 @@ class LogisticRegressionPipeline(BasePipeline):
         sample: Sample = Sample.from_pandas(datasets=datasets, feature_set=self.feature_set)
         return sample
 
-    def optimize_parameters(self) -> Study:
+    def optimize_parameters(self, n_trials: int = 100) -> Study:
         logging.info("Running <optimize_parameters> for LogisticRegressionPipeline")
         sample: Sample = self.create_sample()
         study: Study = create_study(study_name="LogisticRegressionPipelineStudy", start_new=True)
-        study.optimize(partial(_objective, sample=sample), n_trials=100)
+        study.optimize(partial(_objective, sample=sample), n_trials=n_trials)
         return study
 
     def train(self, sample: Sample, tuned: bool = True) -> LogisticRegressionModel:

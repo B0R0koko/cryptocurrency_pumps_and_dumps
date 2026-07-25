@@ -296,9 +296,9 @@ def paired_bootstrap_topk_percent_auc_test(
     if normaliser <= 0:
         raise ValueError(f"bins range must be positive, got {bins_array[0]}..{bins_array[-1]}")
 
-    observed_diff: float = float(
-        auc(x=bins_array, y=matrix_a.mean(axis=0)) - auc(x=bins_array, y=matrix_b.mean(axis=0))
-    ) / normaliser
+    observed_diff: float = (
+        float(auc(x=bins_array, y=matrix_a.mean(axis=0)) - auc(x=bins_array, y=matrix_b.mean(axis=0))) / normaliser
+    )
 
     sampled_indices: np.ndarray = _bootstrap_indices(
         n_cross_sections=matrix_a.shape[0],
@@ -316,12 +316,17 @@ def paired_bootstrap_topk_percent_auc_test(
     diffs: np.ndarray = auc_dist_a - auc_dist_b
 
     ci_lower, ci_upper = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
+    # Add-one estimator (North, Curtis, Sham 2002): (1 + count) / (1 + n_bootstrap).
+    # Guarantees a strictly positive p-value even when no bootstrap sample crosses
+    # zero, which the uncentered percentile estimator would report as exactly 0.
     if alternative == "greater":
-        p_value: float = float(np.mean(diffs <= 0))
+        p_value: float = float((1 + int(np.sum(diffs <= 0))) / (1 + n_bootstrap))
     elif alternative == "less":
-        p_value = float(np.mean(diffs >= 0))
+        p_value = float((1 + int(np.sum(diffs >= 0))) / (1 + n_bootstrap))
     else:
-        p_value = float(min(1.0, 2 * min(np.mean(diffs <= 0), np.mean(diffs >= 0))))
+        one_sided_le: float = (1 + int(np.sum(diffs <= 0))) / (1 + n_bootstrap)
+        one_sided_ge: float = (1 + int(np.sum(diffs >= 0))) / (1 + n_bootstrap)
+        p_value = float(min(1.0, 2 * min(one_sided_le, one_sided_ge)))
 
     return PairedBootstrapTestResult(
         metric="topk_percent_auc",

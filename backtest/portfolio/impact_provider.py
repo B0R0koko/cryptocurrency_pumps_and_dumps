@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from typing import Callable, Dict, Optional, Tuple
 
@@ -41,9 +42,15 @@ class LookbackImpactModelProvider(ImpactModelProvider):
             return 1.0
         try:
             return self._indicative_price_provider.get_quote_to_usdt_indicative_price(
-                quote_asset=currency_pair.term, ts=ts,
+                quote_asset=currency_pair.term,
+                ts=ts,
             )
         except Exception:
+            logging.warning(
+                "Falling back to 1.0 quote-to-USDT rate for %s at %s (indicative price lookup failed)",
+                currency_pair.name,
+                ts,
+            )
             return 1.0
 
     def get_impact_model(self, pump: PumpEvent, currency_pair: CurrencyPair) -> PriceImpactModel:

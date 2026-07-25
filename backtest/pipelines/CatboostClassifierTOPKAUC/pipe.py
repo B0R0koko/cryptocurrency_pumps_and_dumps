@@ -36,19 +36,26 @@ _BINS: np.ndarray = np.arange(0, _MAX_K_PERCENT + _STEP, _STEP).astype(np.float6
 
 
 @njit(cache=True)
-def _topkauc_kernel(
-        scores_by_group: np.ndarray,
-        is_pumped_by_group: np.ndarray,
-        group_starts: np.ndarray,
-        bins: np.ndarray,
-        num_pumped: int,
+def _topkpauc_kernel(
+    scores_by_group: np.ndarray,
+    is_pumped_by_group: np.ndarray,
+    group_starts: np.ndarray,
+    bins: np.ndarray,
+    num_cross_sections_with_pump: int,
 ) -> float:
     """
     Numba kernel: for each cross-section (contiguous slice defined by ``group_starts``)
     sort rows by ``scores`` desc, compute a cumulative "any pumped in top-i" indicator,
     and for each K% bin increment the count if the top-K% contains a pumped sample.
     Returns the trapezoidal AUC over ``bins`` of the cumulative hit rate (counts /
-    num_pumped). Caller divides by the bin range to obtain the normalised metric.
+    num_cross_sections_with_pump). Caller divides by the bin range to obtain the
+    normalised metric (TOPKAUC).
+
+    The denominator ``num_cross_sections_with_pump`` matches
+    :func:`backtest.utils.metrics.calculate_topk_percent`: it counts cross-sections
+    that contain at least one pumped row, not pumped rows themselves. Under the
+    project's "one pumped row per cross-section" invariant these coincide, but
+    the semantics matter if that invariant ever breaks.
     """
     n_bins = bins.shape[0]
     counts = np.zeros(n_bins, dtype=np.int64)
@@ -81,7 +88,9 @@ def _topkauc_kernel(
             if any_arr[k - 1]:
                 counts[b] += 1
 
-    rates = counts.astype(np.float64) / num_pumped
+    if num_cross_sections_with_pump == 0:
+        return 0.0
+    rates = counts.astype(np.float64) / num_cross_sections_with_pump
     auc_val = 0.0
     for i in range(n_bins - 1):
         auc_val += 0.5 * (rates[i] + rates[i + 1]) * (bins[i + 1] - bins[i])
@@ -91,10 +100,11 @@ def _topkauc_kernel(
 def _precompute_groups(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Build the permutation and group-boundary arrays consumed by
-    :func:`_topkauc_kernel`. Pandas is used here so the kernel itself can stay
+    :func:`_topkpauc_kernel`. Pandas is used here so the kernel itself can stay
     pure numpy/numba-compatible. The return tuple is ``(sort_idx, is_pumped_sorted,
-    group_starts, num_pumped)`` where rows sorted by ``sort_idx`` are contiguous
-    per cross-section.
+    group_starts, num_cross_sections_with_pump)`` where rows sorted by ``sort_idx``
+    are contiguous per cross-section, and ``num_cross_sections_with_pump`` is the
+    denominator matching :func:`backtest.utils.metrics.calculate_topk_percent`.
     """
     pump_hashes: np.ndarray = df[COL_PUMP_HASH].to_numpy()
     is_pumped: np.ndarray = df[COL_IS_PUMPED].to_numpy(dtype=np.bool_)
@@ -106,20 +116,31 @@ def _precompute_groups(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.nda
         group_starts = np.array([0], dtype=np.int64)
     else:
         change_points: np.ndarray = np.where(np.diff(sorted_codes) != 0)[0] + 1
-        group_starts = np.concatenate(
-            ([0], change_points, [sorted_codes.size])
-        ).astype(np.int64)
-    num_pumped: int = int(is_pumped.sum())
-    return sort_idx, is_pumped_sorted, group_starts, num_pumped
+        group_starts = np.concatenate(([0], change_points, [sorted_codes.size])).astype(np.int64)
+
+    n_groups: int = group_starts.shape[0] - 1
+    num_cross_sections_with_pump: int = 0
+    for g in range(n_groups):
+        start = int(group_starts[g])
+        end = int(group_starts[g + 1])
+        if end > start and bool(is_pumped_sorted[start:end].any()):
+            num_cross_sections_with_pump += 1
+    return sort_idx, is_pumped_sorted, group_starts, num_cross_sections_with_pump
 
 
-class TOPKPAUCMetric:
+class TOPKAUCMetric:
     """
-    CatBoost custom eval metric computing Top-K%-AUC over ``K% in (0, _MAX_K_PERCENT]``
+    CatBoost custom eval metric computing TOPKAUC over ``K% in (0, _MAX_K_PERCENT]``
     (normalised to ``(0, 1)``). Higher is better (``is_max_optimal → True``).
 
     Precomputes cross-section grouping and is-pumped labels in ``__init__`` so the
     per-iteration path is a single permutation and a numba-JIT'd kernel call.
+
+    CatBoost calls ``evaluate`` once per pool per iteration; the pool being
+    scored is disambiguated by row count first and, if the two pools happen to
+    have the same length, by the label vector supplied in ``target``. This
+    prevents train scores from being evaluated against validation labels (a
+    silent bug in earlier versions when ``train_len == val_len``).
     """
 
     def __init__(self, df_train: pd.DataFrame, df_val: pd.DataFrame) -> None:
@@ -127,29 +148,46 @@ class TOPKPAUCMetric:
         self._val_ctx: Tuple[np.ndarray, np.ndarray, np.ndarray, int] = _precompute_groups(df_val)
         self._train_len: int = len(df_train)
         self._val_len: int = len(df_val)
+        self._train_labels: np.ndarray = df_train[COL_IS_PUMPED].to_numpy(dtype=np.bool_)
+        self._val_labels: np.ndarray = df_val[COL_IS_PUMPED].to_numpy(dtype=np.bool_)
 
     def is_max_optimal(self) -> bool:
         return True
+
+    def _select_context(self, probas_pred: np.ndarray, target: Any) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+        n_rows: int = probas_pred.shape[0]
+        # Fast path when train/val have distinct row counts.
+        if n_rows == self._train_len and n_rows != self._val_len:
+            return self._train_ctx
+        if n_rows == self._val_len and n_rows != self._train_len:
+            return self._val_ctx
+        # Ambiguous row count: fall back to comparing the labels catboost
+        # passes to the metric against the precomputed ones.
+        if target is None:
+            return self._val_ctx
+        target_arr: np.ndarray = np.asarray(target, dtype=np.float64).astype(np.bool_)
+        if target_arr.shape[0] == self._train_labels.shape[0] and np.array_equal(target_arr, self._train_labels):
+            return self._train_ctx
+        return self._val_ctx
 
     def evaluate(self, approxes, target, weight) -> Tuple[float, float]:
         assert len(approxes) == 1
         probas_pred: np.ndarray = np.asarray(approxes[0], dtype=np.float64)
 
-        if probas_pred.shape[0] == self._val_len:
-            sort_idx, is_pumped_sorted, group_starts, num_pumped = self._val_ctx
-        else:
-            sort_idx, is_pumped_sorted, group_starts, num_pumped = self._train_ctx
+        sort_idx, is_pumped_sorted, group_starts, num_cross_sections_with_pump = self._select_context(
+            probas_pred=probas_pred, target=target
+        )
 
-        if num_pumped == 0:
+        if num_cross_sections_with_pump == 0:
             return 0.0, 1.0
 
         scores_sorted: np.ndarray = probas_pred[sort_idx]
-        raw_auc: float = _topkauc_kernel(
+        raw_auc: float = _topkpauc_kernel(
             scores_by_group=scores_sorted,
             is_pumped_by_group=is_pumped_sorted,
             group_starts=group_starts,
             bins=_BINS,
-            num_pumped=num_pumped,
+            num_cross_sections_with_pump=num_cross_sections_with_pump,
         )
         return raw_auc / _MAX_K_PERCENT, 1.0
 
@@ -167,14 +205,14 @@ def _objective(trial: Trial, sample: Sample) -> float:
     df_train: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.TRAIN).all_data()
     df_val: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.VALIDATION).all_data()
     # Add custom evaluation metric that maximizes TOPKAUC
-    base_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKPAUCMetric(df_train=df_train, df_val=df_val)}
+    base_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKAUCMetric(df_train=df_train, df_val=df_val)}
 
     model: CatboostClassifierModel = CatboostClassifierModel(params=base_params | tuned_params)
     model.train(sample=sample)
 
     val: Dataset = sample.get_dataset(ds_type=DatasetType.VALIDATION)
-    topkauc: float = calculate_topk_percent_auc(model=model, dataset=val)
-    return topkauc
+    topkpauc: float = calculate_topk_percent_auc(model=model, dataset=val)
+    return topkpauc
 
 
 class CatboostClassifierTOPKAUCPipeline(BasePipeline):
@@ -203,18 +241,18 @@ class CatboostClassifierTOPKAUCPipeline(BasePipeline):
 
         return sample
 
-    def optimize_parameters(self) -> Study:
+    def optimize_parameters(self, n_trials: int = 500) -> Study:
         logging.info("Running <optimize_parameters> for CatboostClassifierTOPKAUCPipeline")
         sample: Sample = self.create_sample()
         study: Study = create_study(study_name="CatboostClassifierTOPKAUCPipeline", start_new=True)
-        study.optimize(partial(_objective, sample=sample), n_trials=100)
+        study.optimize(partial(_objective, sample=sample), n_trials=n_trials)
         return study
 
     def train(self, sample: Sample, tuned: bool = True) -> CatboostClassifierModel:
         df_train: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.TRAIN).all_data()
         df_val: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.VALIDATION).all_data()
         # Add custom evaluation metric that maximizes TOPKAUC
-        model_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKPAUCMetric(df_train=df_train, df_val=df_val)}
+        model_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKAUCMetric(df_train=df_train, df_val=df_val)}
         if tuned:
             model_params = self.get_model_params(
                 base_params=model_params, study_name="CatboostClassifierTOPKAUCPipeline"

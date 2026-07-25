@@ -174,8 +174,24 @@ class TOPKPortfolio(ImplementsPortfolio):
                         currency_pair=intent.currency_pair,
                         end_exclusive=intent.exit_ts,
                     )
-                    exit_impact_model = candidate if candidate.num_samples > 0 else entry_impact_model
+                    if candidate.num_samples > 0:
+                        exit_impact_model = candidate
+                    else:
+                        logging.warning(
+                            "Manipulated impact model has no samples for %s at pump=%s; "
+                            "falling back to pre-pump impact model for exit",
+                            intent.currency_pair.name,
+                            intent.pump.time,
+                        )
+                        exit_impact_model = entry_impact_model
                 except Exception:
+                    logging.warning(
+                        "Manipulated impact model fit failed for %s at pump=%s; "
+                        "falling back to pre-pump impact model for exit",
+                        intent.currency_pair.name,
+                        intent.pump.time,
+                        exc_info=True,
+                    )
                     exit_impact_model = entry_impact_model
             else:
                 exit_impact_model = entry_impact_model
@@ -360,6 +376,9 @@ def evaluate_topk_pnl_for_quantities(
 def portfolio_pnl_objective(trial: Trial, model: ImplementsRank, sample: Sample) -> float:
     """
     Optuna objective for tuning portfolio timing and top-k size parameters.
+
+    The objective is evaluated on ``DatasetType.VALIDATION`` to avoid tuning against
+    the held-out test set. The test set is reserved for final reported numbers.
     """
     buy_before_minutes: int = trial.suggest_categorical("buy_before", choices=[1, 2, 3, 5, 10, 15, 30, 60])
     sell_after_minutes: int = trial.suggest_categorical("sell_after", choices=[1, 2, 3, 5, 10, 15])
@@ -370,4 +389,4 @@ def portfolio_pnl_objective(trial: Trial, model: ImplementsRank, sample: Sample)
         sell_after=timedelta(minutes=sell_after_minutes),
     )
     manager = TOPKPortfolio(model=model, config=config)
-    return manager.compute_overall_pnl(dataset=sample.get_dataset(ds_type=DatasetType.TEST))
+    return manager.compute_overall_pnl(dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION))

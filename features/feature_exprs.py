@@ -1,14 +1,6 @@
-from datetime import timedelta
-
 import polars as pl
 
 from core.feature_type import FeatureType
-
-
-def compute_asset_hold_time() -> pl.Expr:
-    return ((pl.col("trade_time").last() - pl.col("trade_time_prev").first()).dt.total_nanoseconds() / 1e9).alias(
-        "asset_hold_time"
-    )
 
 
 def compute_flow_imbalance() -> pl.Expr:
@@ -53,14 +45,5 @@ def compute_quote_abs_zscore(quote_abs_mean: float, quote_abs_std: float) -> pl.
     return (pl.col("quote_abs").mean() - quote_abs_mean) / quote_abs_std
 
 
-def compute_return_adj(window: timedelta) -> pl.Expr:
-    """return scaled by hold_time"""
-    return pl.col("asset_return") * (window.total_seconds() / pl.col("asset_hold_time"))
-
-
 def compute_num_trades() -> pl.Expr:
     return pl.len()
-
-
-def compute_close_price() -> pl.Expr:
-    return pl.col("price_last").last().alias("close_price")

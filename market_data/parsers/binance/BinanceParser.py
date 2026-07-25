@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import threading
@@ -18,9 +19,19 @@ from core.time_utils import Bounds
 BINANCE_S3: str = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 BINANCE_DATAVISION: str = "https://data.binance.vision"
 
+# First two bytes of every well-formed ZIP archive; used to reject empty or HTML error responses
+# before they are persisted to disk masquerading as trade data.
+_ZIP_MAGIC: bytes = b"PK"
+
+_log = logging.getLogger(__name__)
+
 
 def filter_hrefs_by_bounds(hrefs: List[str], bounds: Bounds) -> Tuple[List[str], List[date]]:
-    """Takes bounds as input and returns a list of hrefs that matches passed in Bounds"""
+    """Takes bounds as input and returns a list of hrefs that matches passed in Bounds.
+
+    Hrefs that do not contain a YYYY-MM-DD date are skipped with a warning rather than raising, so
+    stray index entries do not abort the crawl.
+    """
 
     filtered_hrefs: List[str] = []
     href_dates: List[date] = []
@@ -29,8 +40,11 @@ def filter_hrefs_by_bounds(hrefs: List[str], bounds: Bounds) -> Tuple[List[str],
 
     for href in hrefs:
         # Find date in href string and parse it to datetime
-        href_date_string: str = re.search(pattern=pattern_str, string=href)[0]
-        href_date: date = datetime.strptime(href_date_string, "%Y-%m-%d").date()
+        match: Optional[re.Match[str]] = re.search(pattern=pattern_str, string=href)
+        if match is None:
+            _log.warning("Skipping href with no parseable date: %s", href)
+            continue
+        href_date: date = datetime.strptime(match.group(0), "%Y-%m-%d").date()
         if bounds.contain_days(day=href_date):
             filtered_hrefs.append(href)
             href_dates.append(href_date)
@@ -59,6 +73,9 @@ class BinanceBaseParser(ABC, scrapy.Spider):
         self._scheduled_hrefs: Set[str] = set()
         self._pbar: Optional[tqdm] = None
         self._shutdown_timer_started: bool = False
+        # (currency_pair, day) tuples whose zip download was rejected as empty or malformed. Logged
+        # at spider close so operators can reconcile against the requested range.
+        self.failed_downloads: List[Tuple[CurrencyPair, date]] = []
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -74,6 +91,14 @@ class BinanceBaseParser(ABC, scrapy.Spider):
         if self._pbar is not None:
             self._pbar.close()
             self._pbar = None
+        if self.failed_downloads:
+            failed_repr: str = ", ".join(f"({cp.name}, {day})" for cp, day in self.failed_downloads)
+            _log.warning(
+                "%s finished with %d failed downloads: %s",
+                self.name,
+                len(self.failed_downloads),
+                failed_repr,
+            )
         if self._shutdown_timer_started:
             return
         self._shutdown_timer_started = True
@@ -121,13 +146,13 @@ class BinanceBaseParser(ABC, scrapy.Spider):
         """Parse hrefs with zip files from currency_pair page"""
 
         currency_pair: Optional[CurrencyPair] = response.meta.get("currency_pair")
-        href_container: List[str] = response.meta.get("href_container")
+        href_container: Optional[List[str]] = response.meta.get("href_container")
 
         assert currency_pair, "Currency pair must be supplied in scrapy.http.Response.meta"
         assert href_container is not None, "Href container must be supplied in scrapy.http.Response.meta"
 
-        hrefs: List[str] = re.findall(pattern=r"<Key>(.*?)</Key>", string=response.text)
-        hrefs: List[str] = [href for href in hrefs if "CHECKSUM" not in href]
+        raw_hrefs: List[str] = re.findall(pattern=r"<Key>(.*?)</Key>", string=response.text)
+        hrefs: List[str] = [href for href in raw_hrefs if "CHECKSUM" not in href]
         href_container.extend(hrefs)
 
         # if len is 500, then we need to send another request with marker param which is the last entry in hrefs
@@ -158,13 +183,32 @@ class BinanceBaseParser(ABC, scrapy.Spider):
             )
 
     def _parse_zip_file(self, response: Response) -> None:
-        day: date = response.meta.get("day")
-        currency_pair: CurrencyPair = response.meta.get("currency_pair")
+        day: Optional[date] = response.meta.get("day")
+        currency_pair: Optional[CurrencyPair] = response.meta.get("currency_pair")
+        assert day is not None, "day must be supplied in scrapy.http.Response.meta"
+        assert currency_pair is not None, "currency_pair must be supplied in scrapy.http.Response.meta"
+
+        body: bytes = response.body
+        if len(body) == 0 or not body.startswith(_ZIP_MAGIC):
+            # Do NOT write; a zero-length or HTML/XML error page would silently pass through as a
+            # corrupt "archive" that later blows up the preprocessing pipeline.
+            _log.warning(
+                "Rejecting non-zip response for %s @ %s (%d bytes, head=%r); skipping write",
+                currency_pair.name,
+                day,
+                len(body),
+                body[:16],
+            )
+            self.failed_downloads.append((currency_pair, day))
+            if self._pbar is not None:
+                self._pbar.update(1)
+            return
+
         path: Path = self.output_zip_path(currency_pair=currency_pair, day=day)
         os.makedirs(path.parent, exist_ok=True)
 
         with open(path, "wb") as file:
-            file.write(response.body)
+            file.write(body)
 
         if self._pbar is not None:
             self._pbar.update(1)

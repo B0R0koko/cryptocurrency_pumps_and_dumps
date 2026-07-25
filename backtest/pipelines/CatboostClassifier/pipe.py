@@ -40,8 +40,8 @@ def _objective(trial: Trial, sample: Sample) -> float:
     model.train(sample=sample)
 
     val: Dataset = sample.get_dataset(ds_type=DatasetType.VALIDATION)
-    topkauc: float = calculate_topk_percent_auc(model=model, dataset=val)
-    return topkauc
+    topkpauc: float = calculate_topk_percent_auc(model=model, dataset=val)
+    return topkpauc
 
 
 class CatboostClassifierPipeline(BasePipeline):
@@ -70,11 +70,11 @@ class CatboostClassifierPipeline(BasePipeline):
 
         return sample
 
-    def optimize_parameters(self) -> Study:
+    def optimize_parameters(self, n_trials: int = 100) -> Study:
         logging.info("Running <optimize_parameters> for CatboostClassifierPipeline")
         sample: Sample = self.create_sample()
         study: Study = create_study(study_name="CatboostClassifierPipelineStudy", start_new=True)
-        study.optimize(partial(_objective, sample=sample), n_trials=100)
+        study.optimize(partial(_objective, sample=sample), n_trials=n_trials)
         return study
 
     def train(self, sample: Sample, tuned: bool = True) -> CatboostClassifierModel:

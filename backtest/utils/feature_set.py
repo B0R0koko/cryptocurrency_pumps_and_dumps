@@ -31,21 +31,31 @@ class FeatureSet:
 
     @property
     def regressors(self) -> List[str]:
-        return self.numeric_features + [] if self.categorical_features is None else self.categorical_features
+        return self.numeric_features + (self.categorical_features or [])
 
     @property
     def all_columns(self) -> List[str]:
-        return self.numeric_features + self.categorical_features + self.eval_fields or []
+        return self.numeric_features + (self.categorical_features or []) + (self.eval_fields or [])
 
     @classmethod
     def auto(cls) -> "FeatureSet":
+        """Enumerate every offset-aware feature type in :class:`FeatureType`
+        declaration order and produce the flat list of numeric features that
+        the pipelines consume.
+
+        Determinism note: this iterates ``FeatureType`` directly (enum
+        declaration order) instead of ``set(list(FeatureType))``. The set path
+        is nondeterministic across processes because Python's set iteration
+        depends on ``PYTHONHASHSEED``; two processes then hand CatBoost
+        columns in different orders, and CatBoost's tie-breaking during greedy
+        tree splits picks different splits — this was the top source of the
+        cross-process training nondeterminism the paper hit.
         """
-        Create feature set manually without dynamically inferring from the collection pipeline
-        """
-        feature_type: FeatureType
         numeric_features: List[str] = []
 
-        features_with_offsets: set[FeatureType] = set(list(FeatureType)) - {FeatureType.NUM_PREV_PUMP}
+        features_with_offsets: List[FeatureType] = [
+            feature_type for feature_type in FeatureType if feature_type != FeatureType.NUM_PREV_PUMP
+        ]
 
         for feature_type in features_with_offsets:
             numeric_features.extend(feature_type.col_names(offsets=REGRESSOR_OFFSETS))

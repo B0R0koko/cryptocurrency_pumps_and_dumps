@@ -151,3 +151,66 @@ def test_calculate_f1_with_top1_rule_handles_non_contiguous_index() -> None:
     f1: float = calculate_f1(model=model, dataset=dataset, decision_rule="top1_per_cross_section")
 
     assert np.isclose(f1, 0.0)
+
+
+def test_calculate_topk_does_not_mutate_source_dataframe() -> None:
+    """Regression: previously assigned COL_PROBAS_PRED onto ``dataset.all_data()``,
+    mutating the caller's frame. The metric must operate on a copy."""
+    # Build a source frame that does NOT already contain COL_PROBAS_PRED so we can
+    # observe whether the metric leaks a prediction column onto the caller.
+    source: pd.DataFrame = _test_data.copy().rename(columns={COL_PROBAS_PRED: "raw_score"})
+    dataset: Dataset = Dataset(data=source, ds_type=DatasetType.TEST, feature_set=feature_set)
+
+    class ExternalScoreModel(ImplementsRank):
+        def rank(self, dataset: Dataset) -> pd.Series:
+            return dataset.all_data()["raw_score"].to_numpy()
+
+    _ = calculate_topk(model=ExternalScoreModel(), dataset=dataset, bins=[1, 2, 5])
+    _ = calculate_topk_percent(model=ExternalScoreModel(), dataset=dataset, bins=[0.1, 0.2, 0.5])
+
+    assert COL_PROBAS_PRED not in source.columns
+    assert COL_PROBAS_PRED not in dataset.all_data().columns
+
+
+def _make_dataset_with_missing_pump_cross_section() -> Dataset:
+    """Two cross-sections, one with the pumped row, one without any pump at all."""
+    frame: pd.DataFrame = pd.DataFrame(
+        data=[
+            (0.9, "pump#has-pump", 1),
+            (0.5, "pump#has-pump", 0),
+            (0.4, "pump#has-pump", 0),
+            (0.8, "pump#no-pump", 0),
+            (0.6, "pump#no-pump", 0),
+            (0.3, "pump#no-pump", 0),
+        ],
+        columns=[COL_PROBAS_PRED, COL_PUMP_HASH, COL_IS_PUMPED],
+    )
+    return Dataset(data=frame, ds_type=DatasetType.TEST, feature_set=feature_set)
+
+
+def test_calculate_topk_denominator_uses_cross_sections_with_pump_not_pumped_row_count() -> None:
+    """Regression: TOP1 should be 1.0 when the only cross-section containing a pump
+    ranks it first, regardless of how many additional pump-free cross-sections
+    are appended."""
+    dataset: Dataset = _make_dataset_with_missing_pump_cross_section()
+
+    class TopScoreModel(ImplementsRank):
+        def rank(self, dataset: Dataset) -> pd.Series:
+            return dataset.all_data()[COL_PROBAS_PRED].to_numpy()
+
+    topk: pd.Series = calculate_topk(model=TopScoreModel(), dataset=dataset, bins=[1, 2])
+    assert np.isclose(topk.loc[1], 1.0)
+    assert np.isclose(topk.loc[2], 1.0)
+
+
+def test_calculate_topk_percent_denominator_uses_cross_sections_with_pump() -> None:
+    dataset: Dataset = _make_dataset_with_missing_pump_cross_section()
+
+    class TopScoreModel(ImplementsRank):
+        def rank(self, dataset: Dataset) -> pd.Series:
+            return dataset.all_data()[COL_PROBAS_PRED].to_numpy()
+
+    topk_pct: pd.Series = calculate_topk_percent(model=TopScoreModel(), dataset=dataset, bins=[0.34, 0.67])
+    # 34% of 3 rows = 2 rows; top-2 in the pumped cross-section contains the pump.
+    assert np.isclose(topk_pct.loc[0.34], 1.0)
+    assert np.isclose(topk_pct.loc[0.67], 1.0)

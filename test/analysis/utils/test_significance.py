@@ -88,10 +88,11 @@ def test_paired_bootstrap_topk_percent_auc_detects_significant_difference() -> N
         pumped_rank_fn=lambda _: 11,
     )
 
+    n_bootstrap: int = 400
     result = paired_bootstrap_topk_percent_auc_test(
         scored_df_a=scored_df_good,
         scored_df_b=scored_df_bad,
-        n_bootstrap=400,
+        n_bootstrap=n_bootstrap,
         alpha=0.05,
         random_state=13,
         alternative="greater",
@@ -99,4 +100,33 @@ def test_paired_bootstrap_topk_percent_auc_detects_significant_difference() -> N
 
     assert result.observed_diff > 0
     assert result.ci_lower > 0
-    assert result.p_value < 0.01
+    # Add-one estimator: even when no bootstrap sample crosses zero, p is
+    # 1 / (1 + n_bootstrap) > 0 rather than exactly 0.
+    assert result.p_value > 0
+    assert result.p_value <= 1.0 / (1.0 + n_bootstrap)
+
+
+def test_paired_bootstrap_topk_percent_auc_p_value_is_strictly_positive() -> None:
+    """Regression: uncentered percentile estimator could return p=0 exactly.
+    The add-one estimator (1 + count) / (1 + n_bootstrap) always exceeds zero."""
+    scored_df_good = _build_scored_df(
+        n_cross_sections=30,
+        cross_section_size=12,
+        pumped_rank_fn=lambda _: 0,
+    )
+    scored_df_bad = _build_scored_df(
+        n_cross_sections=30,
+        cross_section_size=12,
+        pumped_rank_fn=lambda _: 11,
+    )
+    n_bootstrap: int = 200
+    for alternative in ("greater", "less", "two-sided"):
+        result = paired_bootstrap_topk_percent_auc_test(
+            scored_df_a=scored_df_good,
+            scored_df_b=scored_df_bad,
+            n_bootstrap=n_bootstrap,
+            alpha=0.05,
+            random_state=13,
+            alternative=alternative,
+        )
+        assert result.p_value > 0.0, f"p_value must be strictly positive for {alternative!r}"

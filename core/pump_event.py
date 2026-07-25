@@ -42,4 +42,6 @@ class PumpEvent:
         )
 
     def __lt__(self, other) -> bool:
-        return self.time < other.time
+        if not isinstance(other, PumpEvent):
+            return NotImplemented
+        return (self.time, self.currency_pair.name) < (other.time, other.currency_pair.name)
