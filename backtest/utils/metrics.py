@@ -17,7 +17,7 @@ from sklearn.metrics import (
 def calculate_topk(model: ImplementsRank, dataset: Dataset, bins: Iterable[float]) -> pd.Series:
     """
     :param bins: bins used to calculate topk
-    :return: pd.Series with TOPK accuracy per bin. The value at ``K`` is the share of
+    :return: pd.Series with Top@k accuracy per bin. The value at ``k`` is the share of
         pump-carrying cross-sections whose top-K assets (ranked by model score) contain
         the pumped asset. The denominator is the number of cross-sections that contain
         at least one pumped row, not the number of pumped rows.
@@ -48,7 +48,7 @@ def calculate_topk(model: ImplementsRank, dataset: Dataset, bins: Iterable[float
 def calculate_topk_percent(model: ImplementsRank, dataset: Dataset, bins: Iterable[float]) -> pd.Series:
     """
     :param bins: bins used to calculate topk. K measures the share of cross-section taken as a portfolio
-    :return: pd.Series with TOPKP accuracy per bin. The denominator is the number of
+    :return: pd.Series with Top@k% accuracy per bin. The denominator is the number of
         cross-sections that contain at least one pumped row.
     """
     probas_pred: np.ndarray = model.rank(dataset=dataset)
@@ -84,7 +84,7 @@ def calculate_topk_percent_auc(
     step: float = 0.005,
 ) -> float:
     """
-    Compute the area under the TOPKP accuracy curve over ``K% in (0, max_k_percent]`` (TOPKAUC) and
+    Compute the area under the Top@k% accuracy curve over ``k% in (0, max_k_percent]`` (Top@k%AUC) and
     normalise by the integration range so the result stays in ``(0, 1)``.
 
     Restricting the range to the steep, low-K% region (default 0-20%) makes the metric

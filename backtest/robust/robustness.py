@@ -95,7 +95,7 @@ def run_cross_section_subset_robustness(
     Validation and test splits are kept fixed.
 
     When ``collect_feature_importances`` is True the model's feature importances are also captured on
-    every run (the same resample-train-fit loop that produces the TOPKAUC distribution), giving a
+    every run (the same resample-train-fit loop that produces the Top@k%AUC distribution), giving a
     bootstrap distribution of feature importances. The long-format frame (one row per run x feature with
     columns ``run_idx``, ``seed``, ``feature``, ``feature_importance``) is attached to the returned frame
     under ``results.attrs["feature_importances"]`` and, if ``feature_importance_output_path`` is given,
@@ -259,7 +259,7 @@ def evaluate_subperiod_metrics(
 ) -> pd.DataFrame:
     """
     Split the test set into early and late subperiods by pump event date
-    and evaluate TOPKP and TOPKAUC on each half independently.
+    and evaluate Top@k% and Top@k%AUC on each half independently.
 
     Subperiods with fewer than ``min_pumps`` pump events are skipped with a
     warning. Reporting metrics on tiny subperiods (e.g. n=3) produces noisy
@@ -276,7 +276,7 @@ def evaluate_subperiod_metrics(
     split_date : str
         ISO date string to split the test set into early (<= split_date) and late (> split_date).
     topk_bins : Sequence[float]
-        Percentage bins for TOPKP evaluation.
+        Percentage bins for Top@k% evaluation.
     min_pumps : int
         Minimum pump events required for a subperiod to be evaluated.
 

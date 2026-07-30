@@ -49,7 +49,7 @@ def _topkpauc_kernel(
     and for each K% bin increment the count if the top-K% contains a pumped sample.
     Returns the trapezoidal AUC over ``bins`` of the cumulative hit rate (counts /
     num_cross_sections_with_pump). Caller divides by the bin range to obtain the
-    normalised metric (TOPKAUC).
+    normalised metric (Top@k%AUC).
 
     The denominator ``num_cross_sections_with_pump`` matches
     :func:`backtest.utils.metrics.calculate_topk_percent`: it counts cross-sections
@@ -130,7 +130,7 @@ def _precompute_groups(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.nda
 
 class TOPKAUCMetric:
     """
-    CatBoost custom eval metric computing TOPKAUC over ``K% in (0, _MAX_K_PERCENT]``
+    CatBoost custom eval metric computing Top@k%AUC over ``k% in (0, _MAX_K_PERCENT]``
     (normalised to ``(0, 1)``). Higher is better (``is_max_optimal → True``).
 
     Precomputes cross-section grouping and is-pumped labels in ``__init__`` so the
@@ -204,7 +204,7 @@ def _objective(trial: Trial, sample: Sample) -> float:
     }
     df_train: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.TRAIN).all_data()
     df_val: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.VALIDATION).all_data()
-    # Add custom evaluation metric that maximizes TOPKAUC
+    # Add custom evaluation metric that maximizes Top@k%AUC
     base_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKAUCMetric(df_train=df_train, df_val=df_val)}
 
     model: CatboostClassifierModel = CatboostClassifierModel(params=base_params | tuned_params)
@@ -251,7 +251,7 @@ class CatboostClassifierTOPKAUCPipeline(BasePipeline):
     def train(self, sample: Sample, tuned: bool = True) -> CatboostClassifierModel:
         df_train: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.TRAIN).all_data()
         df_val: pd.DataFrame = sample.get_dataset(ds_type=DatasetType.VALIDATION).all_data()
-        # Add custom evaluation metric that maximizes TOPKAUC
+        # Add custom evaluation metric that maximizes Top@k%AUC
         model_params: Dict[str, Any] = _BASE_PARAMS | {"eval_metric": TOPKAUCMetric(df_train=df_train, df_val=df_val)}
         if tuned:
             model_params = self.get_model_params(

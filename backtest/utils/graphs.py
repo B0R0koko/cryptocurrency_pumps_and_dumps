@@ -120,7 +120,7 @@ def plot_feature_distributions(
 
 
 # ---------------------------------------------------------------------------
-# TOPK / TOPKP plots
+# Top@k / Top@k% plots
 # ---------------------------------------------------------------------------
 
 
@@ -131,7 +131,7 @@ def plot_topk_accuracy(
     bins: Sequence[int] = (1, 2, 3, 5, 10, 20, 30),
     save_path: Optional[str] = None,
 ) -> plt.Figure:
-    """Plot TOPK accuracy curves with optional random baseline, anchored at (K=0, 0)."""
+    """Plot Top@k accuracy curves with optional random baseline, anchored at (k=0, 0)."""
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot()
     origin = pd.DataFrame(0.0, index=[0], columns=cols)
@@ -140,9 +140,9 @@ def plot_topk_accuracy(
     if random_baseline is not None:
         plt.plot([0, *bins], [0.0, *random_baseline], color="grey", marker="o", label="Random ranking baseline")
     plt.legend()
-    plt.ylabel("TOPK accuracy")
-    plt.xlabel("K")
-    plt.title("TOPK Accuracy vs K")
+    plt.ylabel("Top@k accuracy")
+    plt.xlabel("k")
+    plt.title("Top@k accuracy vs k")
     plt.grid()
     plt.tight_layout()
     if save_path:
@@ -157,7 +157,7 @@ def plot_topk_percent_curves(
     max_k_percent: float = 0.20,
     save_path: Optional[str] = None,
 ) -> plt.Figure:
-    """Plot TOPKP accuracy curves with TOPKAUC in legend over ``K% in [0, max_k_percent]``."""
+    """Plot Top@k% accuracy curves with Top@k%AUC in legend over ``k% in [0, max_k_percent]``."""
     X = np.linspace(0, max_k_percent, 101)
     legends = [f"{c} - {auc_scores.get(c, 0):.3f}" for c in cols]
 
@@ -165,9 +165,9 @@ def plot_topk_percent_curves(
     df_topkp[cols].plot(ax=ax, alpha=0.7)
     ax.plot(X, X, linestyle="--", color="grey", label="Random ranking baseline")
     ax.legend(legends + ["Random ranking baseline"])
-    ax.set_xlabel("K%")
-    ax.set_ylabel("TOPKP accuracy")
-    ax.set_title("TOPKP Accuracy vs K%")
+    ax.set_xlabel("k%")
+    ax.set_ylabel("Top@k% accuracy")
+    ax.set_title("Top@k% accuracy vs k%")
     ax.set_xlim(0, max_k_percent)
     ax.grid()
     plt.tight_layout()
@@ -415,13 +415,13 @@ def plot_exit_impact_regression(
 
 
 def _metric_label(col: str) -> str:
-    """Map an internal metric column onto the paper's notation (``topk_percent@0.05`` -> ``TOPKP@5%``)."""
+    """Map an internal metric column onto the paper's notation (``topk_percent@0.05`` -> ``Top@5%``)."""
     if col == "topk_percent_auc":
-        return "TOPKAUC"
+        return "Top@k%AUC"
     if col.startswith("topk_percent@"):
-        return f"TOPKP@{float(col.split('@', 1)[1]) * 100:g}%"
+        return f"Top@{float(col.split('@', 1)[1]) * 100:g}%"
     if col.startswith("topk@"):
-        return f"TOPK@{col.split('@', 1)[1]}"
+        return f"Top@{col.split('@', 1)[1]}"
     return col
 
 
@@ -430,18 +430,18 @@ def plot_robustness_distribution(
     metric_cols: List[str],
     save_path: Optional[str] = None,
 ) -> plt.Figure:
-    """Histogram of TOPKAUC and boxplot of per-bin TOPKP metrics."""
+    """Histogram of Top@k%AUC and boxplot of per-bin Top@k% metrics."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
     df_robustness["topk_percent_auc"].hist(ax=axes[0], bins=12, alpha=0.85)
     axes[0].axvline(df_robustness["topk_percent_auc"].mean(), color="red", linestyle="--", label="Mean")
-    axes[0].set_title("Distribution of TOPKAUC")
-    axes[0].set_xlabel("TOPKAUC")
+    axes[0].set_title("Distribution of Top@k%AUC")
+    axes[0].set_xlabel("Top@k%AUC")
     axes[0].set_ylabel("Count")
     axes[0].legend()
 
     df_robustness[metric_cols].rename(columns={c: _metric_label(c) for c in metric_cols}).boxplot(ax=axes[1])
-    axes[1].set_title("Distribution of TOPKP metrics")
+    axes[1].set_title("Distribution of Top@k% metrics")
     axes[1].set_ylabel("Score")
     axes[1].tick_params(axis="x", rotation=45)
 
@@ -502,7 +502,7 @@ def plot_bootstrap_ci(
     df_topkp_ci: pd.DataFrame,
     save_path: Optional[str] = None,
 ) -> plt.Figure:
-    """Error-bar plots for TOPK and TOPKP with bootstrap CIs."""
+    """Error-bar plots for Top@k and Top@k% with bootstrap CIs."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
     x = np.arange(len(df_topk_ci.index))
@@ -510,10 +510,10 @@ def plot_bootstrap_ci(
     yerr = np.vstack([y - df_topk_ci["ci_lower"].to_numpy(), df_topk_ci["ci_upper"].to_numpy() - y])
     axes[0].errorbar(x, y, yerr=yerr, fmt="o-", capsize=4)
     axes[0].set_xticks(x)
-    axes[0].set_xticklabels([f"TOPK@{k:g}" for k in df_topk_ci.index])
-    axes[0].set_title("TOPK with 95% CI")
-    axes[0].set_xlabel("K")
-    axes[0].set_ylabel("TOPK")
+    axes[0].set_xticklabels([f"Top@{k:g}" for k in df_topk_ci.index])
+    axes[0].set_title("Top@k with 95% CI")
+    axes[0].set_xlabel("k")
+    axes[0].set_ylabel("Top@k")
     axes[0].grid(True)
 
     x2 = np.arange(len(df_topkp_ci.index))
@@ -521,10 +521,10 @@ def plot_bootstrap_ci(
     yerr2 = np.vstack([y2 - df_topkp_ci["ci_lower"].to_numpy(), df_topkp_ci["ci_upper"].to_numpy() - y2])
     axes[1].errorbar(x2, y2, yerr=yerr2, fmt="o-", capsize=4)
     axes[1].set_xticks(x2)
-    axes[1].set_xticklabels([f"TOPKP@{k * 100:g}%" for k in df_topkp_ci.index])
-    axes[1].set_title("TOPKP with 95% CI")
-    axes[1].set_xlabel("K%")
-    axes[1].set_ylabel("TOPKP")
+    axes[1].set_xticklabels([f"Top@{k * 100:g}%" for k in df_topkp_ci.index])
+    axes[1].set_title("Top@k% with 95% CI")
+    axes[1].set_xlabel("k%")
+    axes[1].set_ylabel("Top@k%")
     axes[1].grid(True)
 
     plt.tight_layout()

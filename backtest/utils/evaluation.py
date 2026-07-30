@@ -28,7 +28,7 @@ def highlight_max(s: pd.Series) -> List[str]:
 
 
 def random_topk_baseline(dataset: Dataset, bins: Sequence[int] = (1, 2, 3, 5, 10, 20, 30)) -> List[float]:
-    """Expected TOPK accuracy of a random classifier."""
+    """Expected Top@k accuracy of a random classifier."""
     df_all = dataset.all_data()
     topks = []
     for k in bins:
@@ -41,9 +41,9 @@ def evaluate_experiments_topk(
     experiments: List[Experiment],
     bins: Sequence[int] = (1, 2, 3, 5, 10, 20, 30),
 ) -> pd.DataFrame:
-    """Compute TOPK for every experiment on its TEST split. Returns (bins x experiments) DataFrame."""
+    """Compute Top@k for every experiment on its TEST split. Returns (bins x experiments) DataFrame."""
     topk_vals: Dict[str, List[float]] = {}
-    for experiment in tqdm(experiments, desc="TOPK"):
+    for experiment in tqdm(experiments, desc="Top@k"):
         name = experiment.get_experiment_name()
         sample = experiment.get_sample()
         model = experiment.get_model()
@@ -56,9 +56,9 @@ def evaluate_experiments_topk_percent(
     experiments: List[Experiment],
     bins: Sequence[float] = (0.01, 0.02, 0.05, 0.1, 0.2, 0.5),
 ) -> pd.DataFrame:
-    """Compute TOPKP for every experiment on its TEST split."""
+    """Compute Top@k% for every experiment on its TEST split."""
     topkp_vals: Dict[str, List[float]] = {}
-    for experiment in tqdm(experiments, desc="TOPKP"):
+    for experiment in tqdm(experiments, desc="Top@k%"):
         name = experiment.get_experiment_name()
         sample = experiment.get_sample()
         model = experiment.get_model()
@@ -72,15 +72,15 @@ def evaluate_experiments_topk_percent_curves(
     bins: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, float]]:
     """
-    Compute dense TOPKP curves and TOPKAUC for every experiment.
+    Compute dense Top@k% curves and Top@k%AUC for every experiment.
 
-    Returns (DataFrame of curves, dict of experiment_name -> TOPKAUC).
+    Returns (DataFrame of curves, dict of experiment_name -> Top@k%AUC).
     """
     if bins is None:
         bins = np.arange(0, 0.21, 0.01)
     topkp_vals: Dict[str, List[float]] = {}
     auc_scores: Dict[str, float] = {}
-    for experiment in tqdm(experiments, desc="TOPKP curves"):
+    for experiment in tqdm(experiments, desc="Top@k% curves"):
         name = experiment.get_experiment_name()
         sample = experiment.get_sample()
         model = experiment.get_model()
@@ -105,10 +105,10 @@ def evaluate_experiments_classification(
             {
                 "Model": name,
                 "PR-AUC": calculate_pr_auc(model=model, dataset=dataset),
-                "F1 (TOPK@1 per cross-section)": calculate_f1(
+                "F1 (Top@1 per cross-section)": calculate_f1(
                     model=model, dataset=dataset, decision_rule="top1_per_cross_section"
                 ),
-                "Balanced Accuracy (TOPK@1 per cross-section)": calculate_balanced_accuracy(
+                "Balanced Accuracy (Top@1 per cross-section)": calculate_balanced_accuracy(
                     model=model, dataset=dataset, decision_rule="top1_per_cross_section"
                 ),
             }
@@ -122,7 +122,7 @@ def get_equity_curve_for_experiment(
     use_price_impact: bool = False,
     order_notional_usdt: float = 1.0,
 ) -> pd.DataFrame:
-    """Run TOP-K portfolio backtest for one experiment and return time-indexed PnL series."""
+    """Run top-k portfolio backtest for one experiment and return time-indexed PnL series."""
     sample = experiment.get_sample()
     manager = TOPKPortfolio(
         model=experiment.get_model(),
