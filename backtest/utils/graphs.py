@@ -217,9 +217,6 @@ def plot_equity_curves(
     for line in ax.get_lines():
         if baseline_cols and line.get_label() in baseline_cols:
             line.set_color("black")
-            line.set_linestyle("--")
-            line.set_linewidth(2.5)
-            line.set_marker("")
     ax.legend()
     ax.set_title(title)
     ax.set_ylabel("Cumulative return")
