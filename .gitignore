@@ -13,8 +13,8 @@ __pycache__/
 catboost_info/
 **/catboost_info/
 
-# Notebooks (not distributed)
-notebooks/
+# Notebook runtime outputs (keep the runnable notebooks themselves)
+notebooks/analysis_outputs/
 
 # Image outputs from runs
 **/images/

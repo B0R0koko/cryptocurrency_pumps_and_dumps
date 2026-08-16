@@ -28,6 +28,8 @@ class TOPKPortfolio(ImplementsPortfolio):
     Orchestrates Top@k portfolio construction, execution simulation, and PnL evaluation.
     """
 
+    MIN_MANIPULATED_EXIT_SAMPLES: int = 20
+
     def __init__(
         self,
         model: ImplementsRank,
@@ -187,14 +189,17 @@ class TOPKPortfolio(ImplementsPortfolio):
                         currency_pair=intent.currency_pair,
                         end_exclusive=intent.exit_ts,
                     )
-                    if candidate.num_samples > 0:
+                    if candidate.num_samples >= self.MIN_MANIPULATED_EXIT_SAMPLES:
                         exit_impact_model = candidate
                     else:
                         logging.warning(
-                            "Manipulated impact model has no samples for %s at pump=%s; "
+                            "Manipulated impact model has only %d samples for %s at pump=%s; "
+                            "minimum is %d; "
                             "falling back to pre-pump impact model for exit",
+                            candidate.num_samples,
                             intent.currency_pair.name,
                             intent.pump.time,
+                            self.MIN_MANIPULATED_EXIT_SAMPLES,
                         )
                         exit_impact_model = entry_impact_model
                 except Exception:
@@ -222,10 +227,10 @@ class TOPKPortfolio(ImplementsPortfolio):
             entry_ts=intent.entry_ts,
             exit_ts=intent.exit_ts,
             intended_notional_quote=intent.intended_notional_quote,
-            entry_filled_notional_quote=execution.filled_notional_quote,
-            exit_filled_notional_quote=execution.filled_notional_quote,
-            entry_filled_notional_usdt=execution.filled_notional_usdt_entry,
-            exit_filled_notional_usdt=execution.filled_notional_usdt_exit,
+            entry_filled_notional_quote=execution.entry_filled_notional_quote,
+            exit_filled_notional_quote=execution.exit_filled_notional_quote,
+            entry_filled_notional_usdt=execution.entry_filled_notional_usdt,
+            exit_filled_notional_usdt=execution.exit_filled_notional_usdt,
             entry_impact_bps=execution.entry_impact_bps,
             exit_impact_bps=execution.exit_impact_bps,
             entry_impact_num_bars=entry_impact_model.num_samples if entry_impact_model is not None else 0,

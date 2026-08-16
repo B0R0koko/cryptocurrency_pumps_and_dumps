@@ -31,6 +31,11 @@ _BASE_PARAMS: Dict[str, Any] = {
 }
 
 
+def build_return_rank_labels(df: pd.DataFrame) -> pd.Series:
+    """Rank returns highest-first; percentile rank ``1 / N`` is the first position."""
+    return df.groupby(COL_PUMP_ID, sort=False)["target_return@5MIN"].rank(pct=True, ascending=False)
+
+
 def _objective(trial: Trial, sample: Sample) -> float:
     tuned_params: Dict[str, Any] = {
         "iterations": trial.suggest_int("iterations", 10, 1000),
@@ -51,7 +56,7 @@ class CatboostRankerPipeline(BasePipeline):
 
     def __init__(self):
         self.feature_set: FeatureSet = FeatureSet.auto()
-        self.feature_set.target = "asset_return_rank"  # from 1...N, first has the highest return within cross-section
+        self.feature_set.target = "asset_return_rank"  # first rank has the highest return within the cross-section
 
     @overrides
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -63,10 +68,8 @@ class CatboostRankerPipeline(BasePipeline):
         # Fillna target for ranker which is target_return@5MIN
         df["target_return@5MIN"] = df["target_return@5MIN"].fillna(0)
         df_scaled: pd.DataFrame = cross_section_standardisation(df=df)
-        # Create rankings
-        df_scaled[self.feature_set.target] = df_scaled.groupby(COL_PUMP_ID, sort=False)["target_return@5MIN"].rank(
-            pct=True, ascending=False
-        )
+        # Create highest-first percentile ranks (the first position is 1 / group size).
+        df_scaled[self.feature_set.target] = build_return_rank_labels(df_scaled)
         assert df_scaled[COL_PUMP_ID].is_monotonic_increasing, "GroupId must be monotonic increasing"
         return df_scaled
 

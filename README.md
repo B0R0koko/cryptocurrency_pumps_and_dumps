@@ -35,18 +35,18 @@ Evaluation on 80 held-out P&D cross-sections (test period >= 2021-05-01).
 
 Notation is consistent throughout: `Top@k` and `Top@k%` are fixed-count and percentage hit rates; `Top@kAUC` and `Top@k%AUC` are the corresponding curve areas. This project reports and optimizes `Top@k%AUC`.
 
-Final model selection is performed before test evaluation. Across all 11 tuned and untuned candidates, CatBoost + Top@k%AUC early stopping has the highest validation Top@k%AUC (0.667), ahead of untuned CatBoost (0.615) and tuned logistic regression (0.608). That frozen validation winner is the only model used for the test portfolio; test comparisons of the other models are descriptive.
+Final model selection is performed before test evaluation. Across all 11 tuned and untuned candidates, CatBoost + Top@k%AUC early stopping has the highest validation Top@k%AUC (0.667), ahead of tuned CatBoost (0.655) and tuned random forest (0.628). That frozen validation winner is the only model used for the test portfolio; test comparisons of the other models are descriptive.
 
 ### Top@k accuracy (test set)
 
 | Model                         | Top@1  | Top@2  | Top@5  | Top@10 | Top@20 | Top@30 |
 |-------------------------------|:------:|:------:|:------:|:------:|:------:|:------:|
-| Logistic regression + Tuned   | 0.113  | 0.175  | **0.400** | **0.575** | **0.713** | 0.750 |
-| Random forest + Tuned         | 0.113  | 0.175  | 0.375  | 0.513  | 0.663  | **0.763** |
-| CatBoost classifier + Tuned   | 0.088  | 0.188  | 0.375  | 0.513  | 0.650  | 0.713 |
-| CatBoost + SMOTE + Tuned      | 0.075  | 0.113  | 0.213  | 0.250  | 0.338  | 0.413 |
-| CatBoost ranker + Tuned       | 0.100  | 0.163  | 0.300  | 0.425  | 0.538  | 0.575 |
-| **CatBoost + Top@k%AUC ES**   | **0.150** | **0.225** | 0.388 | 0.563 | 0.663 | 0.750 |
+| Logistic regression + Tuned   | 0.100  | 0.200  | **0.425** | **0.575** | **0.700** | **0.763** |
+| Random forest + Tuned         | 0.113  | 0.175  | 0.350  | 0.500  | 0.650  | 0.713 |
+| CatBoost classifier + Tuned   | 0.138  | **0.275** | 0.400  | 0.525  | 0.650  | 0.725 |
+| CatBoost + SMOTE + Tuned      | 0.113  | 0.163  | 0.300  | 0.425  | 0.538  | 0.600 |
+| CatBoost ranker + Tuned       | 0.063  | 0.163  | 0.275  | 0.463  | 0.613  | 0.700 |
+| **CatBoost + Top@k%AUC ES**   | **0.150** | 0.225 | 0.388 | 0.563 | 0.663 | 0.750 |
 
 ### Top@k%AUC with 95% bootstrap CIs
 
@@ -55,30 +55,30 @@ Top@k%AUC is integrated and normalized over the low-k% region k% ∈ (0, 20%], s
 | Model                       | Top@k%AUC  | 95% CI             |
 |-----------------------------|:----------:|:------------------:|
 | **CatBoost + Top@k%AUC ES** | **0.674** | **[0.592, 0.755]** |
-| CatBoost classifier         | 0.627     | [0.546, 0.706]     |
+| CatBoost classifier + Tuned | 0.662     | [0.575, 0.747]     |
 
-Tuned logistic regression has the highest test Top@k%AUC point estimate (0.695), followed by CatBoost + Top@k%AUC ES (0.674), tuned random forest (0.668), tuned CatBoost (0.664), and untuned logistic regression (0.660). The paired comparator is selected only on validation data, which selects untuned CatBoost; the pre-specified one-sided paired test favors ES at the 5% level.
+Tuned logistic regression has the highest test Top@k%AUC point estimate (0.697), followed by CatBoost + Top@k%AUC ES (0.674), tuned CatBoost (0.662), untuned logistic regression (0.660), and tuned random forest (0.651). The paired comparator is selected only on validation data, which selects tuned CatBoost. Their 0.0116 test-set difference is not statistically significant under the pre-specified paired bootstrap test.
 
 ### Portfolio performance (CatBoost + Top@k%AUC ES, 25 bps round-trip, no reinvestment, trade-price entry/exit)
 
 | k  | Avg. event return | Annualized return | Annualized vol. | Sharpe |
 |:--:|:-----------------:|:-----------------:|:---------------:|:------:|
-| 1  | 0.0119 | 0.7382 | 0.7382 | 1.00 |
-| 2  | 0.0115 | 0.7121 | 0.4131 | 1.72 |
-| 5  | 0.0115 | 0.7158 | 0.2815 | **2.54** |
-| 10 | 0.0068 | 0.4232 | 0.2063 | 2.05 |
-| 20 | 0.0040 | 0.2456 | 0.1172 | 2.10 |
-| 30 | 0.0026 | 0.1608 | 0.0801 | 2.01 |
+| 1  | 0.0123 | 0.7621 | 0.7423 | 1.03 |
+| 2  | 0.0118 | 0.7338 | 0.4161 | 1.76 |
+| 5  | 0.0120 | 0.7416 | 0.2896 | **2.56** |
+| 10 | 0.0072 | 0.4457 | 0.2130 | 2.09 |
+| 20 | 0.0043 | 0.2674 | 0.1251 | 2.14 |
+| 30 | 0.0029 | 0.1828 | 0.0894 | 2.04 |
 
-The pre-specified k=5 portfolio maximises Sharpe (2.54). Under the fitted square-root impact model (15-min decision, first subsequent pre-announcement fill, 1-min exit), cumulative ROE declines monotonically from 0.801 at 100 USDT per trade to −0.294 at 10,000 USDT, crossing zero between 5,000 and 10,000 USDT. A BTC buy-and-hold baseline over the same event calendar delivers an annualized return of −0.444 (Sharpe −0.977).
+The pre-specified k=5 portfolio maximises Sharpe (2.56). Under the fitted square-root impact model (15-min decision, first subsequent pre-announcement fill, full inventory liquidation at the 1-min exit), cumulative ROE declines monotonically from 0.840 at 100 USDT per trade to −0.201 at 10,000 USDT, crossing zero between 5,000 and 10,000 USDT. A BTC buy-and-hold baseline over the same event calendar delivers an annualized return of −0.444 (Sharpe −0.977).
 
 ### Key findings
 
 1. **Cross-sectional standardization matters.** Every learned model beats the random baseline at every k; the signal is in the engineered microstructure features, not just the model.
-2. **CatBoost + Top@k%AUC ES is strongest at the lowest fixed-count thresholds.** It leads Top@1 (0.150) and Top@2 (0.225), and it leads all three reported classification metrics: PR-AUC 0.084, F1 0.150, and balanced accuracy 0.574. The untuned CatBoost classifier leads Top@1% at 0.325, while tuned logistic regression leads the broader aggregate Top@k%AUC at 0.695.
-3. **SMOTE fails here.** Synthetic oversampling in this high-dimensional, cross-sectionally standardized panel degrades performance: tuned SMOTE reaches Top@k%AUC 0.415 versus 0.695 for tuned logistic regression. Root causes include bounded sign-meaningful features, cross-event interpolation that breaks the cross-sectional reference, and high-dimensional sparsity with only 290 training positives.
-4. **Ranker underperforms on the aggregate metric.** The tuned CatBoost ranker (YetiRank) reaches Top@k%AUC 0.555, materially below the leading classifiers. In a 1-vs-~287 test cross-section, much of the ordinal supervision concerns negative-vs-negative ordering, whereas class-weighted log-loss focuses on separating the single target.
-5. **Paired-bootstrap significance.** The non-ES comparator is selected on validation only (untuned CatBoost). Paired bootstrap gives ES minus comparator Top@k%AUC of 0.0473 with two-sided 95% CI [−0.0005, 0.0938] and a one-sided p-value of 0.0235. The pre-specified one-sided test favors ES at the 5% level, while the two-sided interval narrowly includes zero.
+2. **CatBoost + Top@k%AUC ES is strongest at the most selective fixed-count threshold.** It leads Top@1 (0.150), F1 (0.150), and balanced accuracy (0.574). Tuned CatBoost leads PR-AUC (0.087), Top@2 (0.275), and Top@1% (0.338), while tuned logistic regression leads the broader aggregate Top@k%AUC at 0.697.
+3. **SMOTE remains weaker.** Even after 100 tuning trials, tuned SMOTE reaches Top@k%AUC 0.574 versus 0.697 for tuned logistic regression. Likely contributors include bounded sign-meaningful features, cross-event interpolation that breaks the cross-sectional reference, and high-dimensional sparsity with only 290 training positives.
+4. **The tuned ranker is competitive but not leading.** The CatBoost ranker (YetiRank), trained on highest-first five-minute return ranks, reaches Top@k%AUC 0.629 after 100 trials. It closes much of the gap to the classifiers but remains below the validation-selected CatBoost + ES model (0.674) and tuned logistic regression (0.697).
+5. **Paired-bootstrap uncertainty.** The non-ES comparator selected on validation is tuned CatBoost. Paired bootstrap gives ES minus comparator Top@k%AUC of 0.0116 with two-sided 95% CI [−0.0120, 0.0369] and a one-sided p-value of 0.174; the models are not statistically distinguishable at the 5% level.
 6. **Robustness.** Retraining ES on random 70% subsets of the training set yields σ(Top@k%AUC) = 0.013 and a central 80% interval [0.662, 0.693]. The early test subperiod (May 2021 – May 2022, 76 events) scores 0.676; the late Jun–Aug 2022 subperiod contains only four events and is excluded by a `min_pumps=10` guard.
 7. **Feature-window audit.** All regressors end strictly at T − 15 minutes; universe membership uses the exact past-only day; sub-hour z-scores use distinct exact windows; post-announcement outcomes never filter the sample; and validation/test values never supply training imputation priors. Top predictors include prior-pump history, multi-day trade counts, standardized quote volume, and standardized returns.
 
@@ -169,7 +169,7 @@ Under the hood the notebook uses the pipelines in `backtest/pipelines/`:
 - `CatboostClassifierTOPKAUC` — CatBoost with `Top@k%AUC` early stopping
 - `CatboostRanker` — learning-to-rank baseline
 
-Each pipeline handles: data split (train < 2020-09-01, validation in [2020-09-01, 2021-05-01), test >= 2021-05-01), cross-sectional standardization, Optuna hyperparameter tuning (10 trials per pipeline, 1000 for CatBoost + Top@k%AUC early stopping), training, and scoring. The notebook first reports validation Top@k, Top@k%, Top@k%AUC, and classification tables/figures, selects the final model by validation Top@k%AUC, and only then opens the test split for final metrics and portfolio backtesting. Results and plots land in `notebooks/analysis_outputs/` and `notebooks/images/`.
+Each pipeline handles: data split (train < 2020-09-01, validation in [2020-09-01, 2021-05-01), test >= 2021-05-01), cross-sectional standardization, 100-trial Optuna hyperparameter tuning, training, and scoring. The notebook first reports validation Top@k, Top@k%, Top@k%AUC, and classification tables/figures, selects the final model by validation Top@k%AUC, and only then opens the test split for final metrics and portfolio backtesting. Results and plots land in `notebooks/analysis_outputs/` and `notebooks/images/`.
 
 ### 8. Portfolio simulation and price-impact backtest
 

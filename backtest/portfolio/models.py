@@ -29,8 +29,9 @@ class ExecutionResult:
 
     entry_price: float
     exit_price: float
-    filled_notional_quote: float
-    filled_notional_usdt_entry: float
-    filled_notional_usdt_exit: float
+    entry_filled_notional_quote: float
+    exit_filled_notional_quote: float
+    entry_filled_notional_usdt: float
+    exit_filled_notional_usdt: float
     entry_impact_bps: float
     exit_impact_bps: float

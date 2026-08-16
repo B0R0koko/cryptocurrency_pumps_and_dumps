@@ -35,14 +35,18 @@ class VWAPEstimator:
             ts=intent.exit_ts,
         )
 
+        entry_filled_notional_quote: float = max(intent.intended_notional_quote, 0.0)
+
         if not use_price_impact:
-            filled_notional_quote: float = max(intent.intended_notional_quote, 0.0)
+            base_quantity: float = entry_filled_notional_quote / intent.entry_price
+            exit_filled_notional_quote: float = base_quantity * intent.exit_price
             return ExecutionResult(
                 entry_price=intent.entry_price,
                 exit_price=intent.exit_price,
-                filled_notional_quote=filled_notional_quote,
-                filled_notional_usdt_entry=filled_notional_quote * quote_to_usdt_entry,
-                filled_notional_usdt_exit=filled_notional_quote * quote_to_usdt_exit,
+                entry_filled_notional_quote=entry_filled_notional_quote,
+                exit_filled_notional_quote=exit_filled_notional_quote,
+                entry_filled_notional_usdt=entry_filled_notional_quote * quote_to_usdt_entry,
+                exit_filled_notional_usdt=exit_filled_notional_quote * quote_to_usdt_exit,
                 entry_impact_bps=0.0,
                 exit_impact_bps=0.0,
             )
@@ -52,24 +56,31 @@ class VWAPEstimator:
         if exit_impact_model is None:
             raise ValueError("exit_impact_model is required when use_price_impact=True")
 
-        filled_notional_quote = max(intent.intended_notional_quote, 0.0)
         impacted_entry_price, entry_impact_bps = entry_impact_model.estimate_vwap_price(
             base_price=intent.entry_price,
             side=1,
-            notional_quote=filled_notional_quote,
+            notional_quote=entry_filled_notional_quote,
         )
+        # Liquidate the complete base-asset inventory acquired on entry. The
+        # expected quote notional of that sell order grows with the asset price;
+        # applying exit impact to the original entry notional would understate
+        # slippage precisely when a selected target pumps.
+        base_quantity = entry_filled_notional_quote / impacted_entry_price
+        exit_order_notional_quote: float = base_quantity * intent.exit_price
         impacted_exit_price, exit_impact_bps = exit_impact_model.estimate_vwap_price(
             base_price=intent.exit_price,
             side=-1,
-            notional_quote=filled_notional_quote,
+            notional_quote=exit_order_notional_quote,
         )
+        exit_filled_notional_quote = base_quantity * impacted_exit_price
 
         return ExecutionResult(
             entry_price=impacted_entry_price,
             exit_price=impacted_exit_price,
-            filled_notional_quote=filled_notional_quote,
-            filled_notional_usdt_entry=filled_notional_quote * quote_to_usdt_entry,
-            filled_notional_usdt_exit=filled_notional_quote * quote_to_usdt_exit,
+            entry_filled_notional_quote=entry_filled_notional_quote,
+            exit_filled_notional_quote=exit_filled_notional_quote,
+            entry_filled_notional_usdt=entry_filled_notional_quote * quote_to_usdt_entry,
+            exit_filled_notional_usdt=exit_filled_notional_quote * quote_to_usdt_exit,
             entry_impact_bps=entry_impact_bps,
             exit_impact_bps=exit_impact_bps,
         )

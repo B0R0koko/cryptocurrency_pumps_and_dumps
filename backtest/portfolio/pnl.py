@@ -28,21 +28,16 @@ class USDTPnLCalculator(PnLCalculator):
         """
         Compute transaction PnL in USDT.
 
-        If quote/USDT metadata is present we convert quote notional using exit-time
-        conversion; otherwise fall back to raw fractional return.
+        When execution metadata is present, PnL is the USDT value of the fully
+        liquidated exit proceeds minus the entry investment and a 25 bp fee on
+        entry capital. This includes the BTC/USDT move over the holding period
+        instead of mixing a BTC return with an exit-time USDT conversion.
         """
         if (
-            tx.exit_filled_notional_quote is not None
+            tx.entry_filled_notional_usdt is not None
             and tx.exit_filled_notional_usdt is not None
-            and tx.exit_filled_notional_quote > 0
+            and tx.entry_filled_notional_usdt > 0
         ):
-            quote_to_usdt_exit: float = tx.exit_filled_notional_usdt / tx.exit_filled_notional_quote
-            return tx.transaction_return * tx.exit_filled_notional_quote * quote_to_usdt_exit
-        if (
-            tx.intended_notional_quote is not None
-            and tx.exit_filled_notional_usdt is not None
-            and tx.intended_notional_quote > 0
-        ):
-            quote_to_usdt_exit = tx.exit_filled_notional_usdt / tx.intended_notional_quote
-            return tx.transaction_return * tx.intended_notional_quote * quote_to_usdt_exit
+            fee_usdt: float = 0.0025 * tx.entry_filled_notional_usdt
+            return tx.exit_filled_notional_usdt - tx.entry_filled_notional_usdt - fee_usdt
         return tx.transaction_return

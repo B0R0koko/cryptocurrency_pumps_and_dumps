@@ -11,6 +11,7 @@ from backtest.portfolio.PriceImpact import (
     fit_price_impact_model_with_diagnostics,
 )
 from backtest.portfolio.TOPKPortfolio import TOPKPortfolio
+from backtest.portfolio.models import OrderIntent
 from backtest.utils.feature_set import FeatureSet
 from backtest.utils.sample import Dataset, DatasetType
 from core.columns import IS_BUYER_MAKER, PRICE, QUANTITY, TRADE_TIME
@@ -237,9 +238,16 @@ def test_topk_transaction_applies_price_impact_to_full_notional(monkeypatch) -> 
     # VWAP impact = 2/3 * beta * sqrt(Q_usdt) ≈ 6.67 bps
     vwap_bps = (2.0 / 3.0) * impact_model.beta * np.sqrt(100.0 * rate)
     assert np.isclose(tx.entry_price, 100.0 * (1 + vwap_bps / 1e4), atol=0.05)
-    assert np.isclose(tx.exit_price, 110.0 * (1 - vwap_bps / 1e4), atol=0.05)
+    expected_base_quantity = 100.0 / tx.entry_price
+    expected_exit_order_notional = expected_base_quantity * 110.0
+    expected_exit_impact_bps = impact_model.predict_vwap_impact_bps(
+        side=-1,
+        notional_quote=expected_exit_order_notional,
+    )
+    expected_exit_price = 110.0 * (1 - expected_exit_impact_bps / 1e4)
+    assert np.isclose(tx.exit_price, expected_exit_price, atol=0.05)
     assert np.isclose(tx.entry_filled_notional_quote, 100.0)
-    assert np.isclose(tx.exit_filled_notional_quote, 100.0)
+    assert np.isclose(tx.exit_filled_notional_quote, expected_base_quantity * expected_exit_price)
     assert tx.entry_ts == pump.time - timedelta(minutes=14)
     assert impact_cutoffs == [pump.time - timedelta(minutes=14)]
     assert isinstance(DummyModel().rank(dataset=dataset), pd.Series)
@@ -248,6 +256,49 @@ def test_topk_transaction_applies_price_impact_to_full_notional(monkeypatch) -> 
 def test_topk_portfolio_defaults_to_14_day_price_impact_lookback() -> None:
     manager = TOPKPortfolio(model=DummyModel(), portfolio_size=1)
     assert manager.impact_lookback_days == 14
+
+
+def test_manipulated_exit_impact_requires_minimum_sample_count(monkeypatch) -> None:
+    cp = CurrencyPair.from_string("AAA-BTC")
+    pump = PumpEvent(
+        currency_pair=cp,
+        time=datetime(2021, 1, 2, 12, 0, 0),
+        exchange=Exchange.BINANCE_SPOT,
+    )
+    manager = TOPKPortfolio(
+        model=DummyModel(),
+        portfolio_size=1,
+        use_price_impact=True,
+        order_notional_quote=1.0,
+        indicative_price_provider=DummyQuoteToUSDTRateProvider(rate=1.0),
+    )
+    pre_pump_model = PriceImpactModel(beta=0.0, quote_to_usdt=1.0, num_samples=100)
+    under_sampled_exit_model = PriceImpactModel(
+        beta=100.0,
+        quote_to_usdt=1.0,
+        num_samples=TOPKPortfolio.MIN_MANIPULATED_EXIT_SAMPLES - 1,
+    )
+    monkeypatch.setattr(manager, "_get_impact_model", lambda pump, cp, end_exclusive: pre_pump_model)
+    monkeypatch.setattr(
+        manager._manipulated_impact_provider,
+        "get_impact_model",
+        lambda pump, currency_pair, end_exclusive: under_sampled_exit_model,
+    )
+    intent = OrderIntent(
+        currency_pair=cp,
+        pump=pump,
+        entry_price=100.0,
+        exit_price=110.0,
+        entry_ts=pump.time - timedelta(minutes=15),
+        exit_ts=pump.time + timedelta(minutes=1),
+        intended_notional_quote=1.0,
+        is_manipulated_asset=True,
+    )
+
+    tx = manager._create_transaction_from_intent(intent)
+
+    assert tx.exit_impact_bps == 0.0
+    assert tx.exit_impact_num_bars == pre_pump_model.num_samples
 
 
 def test_topk_transaction_converts_usdt_to_quote_before_price_impact(
@@ -293,7 +344,7 @@ def test_topk_transaction_converts_usdt_to_quote_before_price_impact(
     expected_notional_quote = 100.0 / rate
     assert np.isclose(tx.intended_notional_quote, expected_notional_quote)
     assert np.isclose(tx.entry_filled_notional_quote, expected_notional_quote)
-    assert np.isclose(tx.exit_filled_notional_quote, expected_notional_quote)
+    assert np.isclose(tx.exit_filled_notional_quote, expected_notional_quote * 1.1)
 
 
 def test_portfolio_stats_pnl_is_usdt_denominated_when_conversion_available() -> None:
@@ -303,8 +354,10 @@ def test_portfolio_stats_pnl_is_usdt_denominated_when_conversion_available() -> 
         entry_price=100.0,
         exit_price=110.0,
         intended_notional_quote=2.0,
-        exit_filled_notional_quote=2.0,
-        exit_filled_notional_usdt=40_000.0,
+        entry_filled_notional_quote=2.0,
+        exit_filled_notional_quote=2.2,
+        entry_filled_notional_usdt=40_000.0,
+        exit_filled_notional_usdt=44_000.0,
     )
     portfolio = Portfolio(currency_pairs=[cp], weights=np.array([1.0]))
     pump = PumpEvent(
@@ -314,8 +367,7 @@ def test_portfolio_stats_pnl_is_usdt_denominated_when_conversion_available() -> 
     )
     stats = PortfolioStats(portfolio=portfolio, txs=[tx], pump=pump)
 
-    expected_tx_return = 110.0 / 100.0 - 1.0 - 0.0025
-    expected_pnl_usdt = expected_tx_return * 2.0 * (40_000.0 / 2.0)
+    expected_pnl_usdt = 44_000.0 - 40_000.0 - 0.0025 * 40_000.0
     assert np.isclose(stats.pnl, expected_pnl_usdt)
 
 
@@ -346,9 +398,9 @@ def test_evaluate_pnl_for_quantities_returns_execution_diagnostics(monkeypatch) 
             exit_price=exit_price,
             intended_notional_quote=intended_usdt,
             entry_filled_notional_quote=intended_usdt,
-            exit_filled_notional_quote=intended_usdt,
+            exit_filled_notional_quote=intended_usdt * exit_price / entry_price,
             entry_filled_notional_usdt=intended_usdt,
-            exit_filled_notional_usdt=intended_usdt,
+            exit_filled_notional_usdt=intended_usdt * exit_price / entry_price,
             entry_impact_bps=entry_impact_bps,
             exit_impact_bps=exit_impact_bps,
             entry_impact_num_bars=1440,
