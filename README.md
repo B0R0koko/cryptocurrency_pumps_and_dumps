@@ -147,7 +147,7 @@ This walks `raw/binance/spot/trades/` and writes HIVE partitions under `transfor
 poetry run python -m features.FeatureWriter
 ```
 
-For each pump event in `resources/pumps.json`, this materializes the cross-section (all tickers active in the exact day ending at `T - 15 min`) and computes microstructure features (asset returns, flow imbalance, slippage, aggressor imbalance, number of trades, etc.) at multiple offsets from 5 min to 14 days before the decision cutoff. Output: one parquet per usable event under `/data/pumps/data/features/pumps/`.
+For each pump event in `resources/pumps.json`, this materializes the cross-section from tickers with at least one actual trade timestamp in the half-open interval `[T - 15 min - 1 day, T - 15 min)`; date-partition membership alone is not sufficient. It then computes microstructure features (asset returns, flow imbalance, slippage, aggressor imbalance, number of trades, etc.) at multiple offsets from 5 min to 14 days before the decision cutoff. Output: one parquet per usable event under `/data/pumps/data/features/pumps/`.
 
 CPU-parallel via `run_parallel(cpu_count=...)`.
 
