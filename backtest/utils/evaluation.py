@@ -233,38 +233,123 @@ def compute_portfolio_statistics(equity_df: pd.DataFrame) -> pd.DataFrame:
 
 def get_btc_buy_and_hold_baseline(
     dataset: Dataset,
+    buy_before: timedelta = timedelta(minutes=15),
+    sell_after: timedelta = timedelta(minutes=1),
+    price_provider: Optional[IndicativePriceProvider] = None,
 ) -> pd.DataFrame:
     """
-    Compute BTC buy-and-hold cumulative return over the test set period.
+    Compute a daily BTC/USDT buy-and-hold benchmark over the strategy calendar.
 
-    Buys BTC/USDT at the first pump event time and holds until the last.
-    PnL changes are allocated to each pump-event timestamp relative to the
-    initial BTC price. Their cumulative sum therefore equals the simple
-    buy-and-hold return exactly, matching the no-reinvestment convention used
-    by the strategy equity curves.
+    The benchmark buys at the first strategy decision timestamp
+    (``first announcement - buy_before``), remains continuously invested, and
+    is valued for the last time at the final strategy exit timestamp
+    (``last announcement + sell_after``).  Intermediate observations are taken
+    at UTC midnight so that volatility is based on daily market returns.
+
+    ``portfolio_return`` contains price increments divided by the fixed initial
+    BTC price.  Its cumulative sum is therefore the exact simple buy-and-hold
+    return and is directly plottable alongside the strategies' no-reinvestment
+    cumulative returns.  ``market_return`` contains consecutive percentage
+    changes for conventional daily-volatility calculations.
     """
-    price_provider = IndicativePriceProvider()
     pumps = sorted(dataset.get_pumps())
 
-    if len(pumps) < 2:
-        return pd.DataFrame(columns=["portfolio_return"])
+    if not pumps:
+        return pd.DataFrame(columns=["portfolio_return", "market_return", "btc_price", "period_days"])
+    if buy_before < timedelta(0) or sell_after < timedelta(0):
+        raise ValueError("buy_before and sell_after must be non-negative")
 
-    # Get BTC price at each pump time
-    prices: List[Dict[str, Any]] = []
-    for pump in pumps:
-        price: Optional[float] = price_provider.get_indicative_price("BTC-USDT", pump.time)
-        if price is not None and price > 0:
-            prices.append({"time": pump.time, "btc_price": price})
+    start_time = pumps[0].time - buy_before
+    end_time = pumps[-1].time + sell_after
+    if end_time <= start_time:
+        raise ValueError("BTC benchmark end time must be after its start time")
 
-    if len(prices) < 2:
-        return pd.DataFrame(columns=["portfolio_return"])
+    # Use daily UTC marks strictly inside the requested interval, then append
+    # the exact final exit.  This preserves the exact strategy endpoints while
+    # providing full-day observations for market-volatility estimation.
+    first_midnight = pd.Timestamp(start_time).normalize() + pd.Timedelta(days=1)
+    daily_marks = pd.date_range(start=first_midnight, end=pd.Timestamp(end_time), freq="D")
+    valuation_times = [start_time]
+    valuation_times.extend(ts.to_pydatetime() for ts in daily_marks if ts < pd.Timestamp(end_time))
+    valuation_times.append(end_time)
 
-    df = pd.DataFrame(prices).set_index("time").sort_index()
+    provider = price_provider or IndicativePriceProvider()
+    prices: List[float] = []
+    for timestamp in valuation_times:
+        price = provider.get_indicative_price("BTC-USDT", timestamp)
+        if price is None or not np.isfinite(price) or price <= 0:
+            raise FileNotFoundError(
+                f"Unable to construct BTC buy-and-hold benchmark: no valid BTC-USDT price at {timestamp.isoformat()}"
+            )
+        prices.append(float(price))
 
-    # Express every price increment on the fixed initial basis. Using ordinary
-    # pct_change here and then plotting a cumulative *sum* is mathematically
-    # inconsistent and does not recover the buy-and-hold return.
+    df = pd.DataFrame({"time": valuation_times, "btc_price": prices}).set_index("time")
     initial_price: float = float(df["btc_price"].iloc[0])
-    df["portfolio_return"] = df["btc_price"].diff().fillna(0.0) / initial_price
+    df["portfolio_return"] = df["btc_price"].diff() / initial_price
+    df["market_return"] = df["btc_price"].pct_change()
+    df["period_days"] = df.index.to_series().diff().dt.total_seconds() / (24 * 60 * 60)
+    result = df.iloc[1:][["portfolio_return", "market_return", "btc_price", "period_days"]].copy()
+    result.attrs.update(
+        {
+            "start_time": start_time,
+            "end_time": end_time,
+            "initial_price": initial_price,
+            "final_price": float(df["btc_price"].iloc[-1]),
+        }
+    )
+    return result
 
-    return df[["portfolio_return"]]
+
+def align_portfolio_returns_with_btc(
+    portfolio_returns: pd.DataFrame,
+    btc_baseline: pd.DataFrame,
+    baseline_label: str = "BTCUSDT buy-and-hold",
+) -> pd.DataFrame:
+    """Place event-driven portfolio returns and continuous BTC returns on one daily calendar."""
+    if portfolio_returns.empty:
+        raise ValueError("portfolio_returns must not be empty")
+    if btc_baseline.empty:
+        raise ValueError("btc_baseline must not be empty")
+
+    strategies = portfolio_returns.copy()
+    strategies.index = pd.to_datetime(strategies.index).normalize()
+    strategies = strategies.groupby(level=0).sum()
+
+    btc_daily = btc_baseline["portfolio_return"].copy()
+    btc_daily.index = pd.to_datetime(btc_daily.index).normalize()
+    btc_daily = btc_daily.groupby(level=0).sum()
+
+    start_time = btc_baseline.attrs.get("start_time", min(strategies.index.min(), btc_daily.index.min()))
+    end_time = btc_baseline.attrs.get("end_time", max(strategies.index.max(), btc_daily.index.max()))
+    calendar = pd.date_range(pd.Timestamp(start_time).normalize(), pd.Timestamp(end_time).normalize(), freq="D")
+
+    aligned = strategies.reindex(calendar, fill_value=0.0)
+    aligned[baseline_label] = btc_daily.reindex(calendar, fill_value=0.0)
+    return aligned
+
+
+def compute_btc_buy_and_hold_statistics(btc_baseline: pd.DataFrame) -> pd.Series:
+    """Summarize the exact-period BTC benchmark using full-day market returns for risk."""
+    if btc_baseline.empty:
+        raise ValueError("btc_baseline must not be empty")
+
+    cumulative_return = float(btc_baseline["portfolio_return"].sum())
+    start_time = pd.Timestamp(btc_baseline.attrs["start_time"])
+    end_time = pd.Timestamp(btc_baseline.attrs["end_time"])
+    elapsed_days = (end_time - start_time).total_seconds() / (24 * 60 * 60)
+    annualized_return = cumulative_return * 365 / elapsed_days
+
+    full_day_mask = np.isclose(btc_baseline["period_days"].to_numpy(dtype=float), 1.0)
+    full_day_returns = btc_baseline.loc[full_day_mask, "market_return"].dropna()
+    annualized_volatility = float(full_day_returns.std() * np.sqrt(365))
+    sharpe_ratio = annualized_return / annualized_volatility if annualized_volatility > 0 else np.nan
+
+    return pd.Series(
+        {
+            "cumulative return": cumulative_return,
+            "annualized return": annualized_return,
+            "annualized volatility": annualized_volatility,
+            "Sharpe ratio": sharpe_ratio,
+        },
+        name="BTCUSDT buy-and-hold",
+    )

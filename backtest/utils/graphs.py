@@ -207,13 +207,23 @@ def plot_equity_curves(
     cols: Optional[List[str]] = None,
     title: str = "Cumulative return on the test set for portfolio of size 5",
     save_path: Optional[str] = None,
+    baseline_cols: Optional[List[str]] = None,
 ) -> plt.Figure:
-    """Cumulative equity curve plot."""
+    """Cumulative equity curve plot with optional benchmark styling."""
     data = df_curves[cols] if cols else df_curves
     fig, ax = plt.subplots(figsize=(10, 5))
-    data.cumsum().plot(ax=ax, marker="o")
+    marker = "o" if len(data.index) <= 100 else None
+    data.cumsum().plot(ax=ax, marker=marker)
+    for line in ax.get_lines():
+        if baseline_cols and line.get_label() in baseline_cols:
+            line.set_color("black")
+            line.set_linestyle("--")
+            line.set_linewidth(2.5)
+            line.set_marker("")
+    ax.legend()
     ax.set_title(title)
     ax.set_ylabel("Cumulative return")
+    ax.axhline(0.0, color="grey", linewidth=0.8, alpha=0.6)
     ax.grid()
     plt.tight_layout()
     if save_path:

@@ -61,16 +61,17 @@ Tuned logistic regression has the highest test Top@k%AUC point estimate (0.697),
 
 ### Portfolio performance (CatBoost + Top@k%AUC ES, 25 bps round-trip, no reinvestment, trade-price entry/exit)
 
-| k  | Avg. event return | Annualized return | Annualized vol. | Sharpe |
-|:--:|:-----------------:|:-----------------:|:---------------:|:------:|
-| 1  | 0.0123 | 0.7621 | 0.7423 | 1.03 |
-| 2  | 0.0118 | 0.7338 | 0.4161 | 1.76 |
-| 5  | 0.0120 | 0.7416 | 0.2896 | **2.56** |
-| 10 | 0.0072 | 0.4457 | 0.2130 | 2.09 |
-| 20 | 0.0043 | 0.2674 | 0.1251 | 2.14 |
-| 30 | 0.0029 | 0.1828 | 0.0894 | 2.04 |
+| Portfolio / benchmark | Avg. event return | Cumulative return | Annualized return | Annualized vol. | Sharpe |
+|:---------------------:|:-----------------:|:-----------------:|:-----------------:|:---------------:|:------:|
+| k=1  | 0.0123 | **0.9834** | 0.7621 | 0.7423 | 1.03 |
+| k=2  | 0.0118 | 0.9470 | 0.7338 | 0.4161 | 1.76 |
+| k=5  | 0.0120 | 0.9570 | 0.7416 | 0.2896 | **2.56** |
+| k=10 | 0.0072 | 0.5751 | 0.4457 | 0.2130 | 2.09 |
+| k=20 | 0.0043 | 0.3451 | 0.2674 | 0.1251 | 2.14 |
+| k=30 | 0.0029 | 0.2358 | 0.1828 | 0.0894 | 2.04 |
+| BTCUSDT buy-and-hold | — | −0.5727 | −0.4448 | 0.7340 | −0.61 |
 
-The pre-specified k=5 portfolio maximises Sharpe (2.56). Under the fitted square-root impact model (15-min decision, first subsequent pre-announcement fill, full inventory liquidation at the 1-min exit), cumulative ROE declines monotonically from 0.840 at 100 USDT per trade to −0.201 at 10,000 USDT, crossing zero between 5,000 and 10,000 USDT. A BTC buy-and-hold baseline over the same event calendar delivers an annualized return of −0.444 (Sharpe −0.977).
+The pre-specified k=5 portfolio maximises Sharpe (2.56). Every tested k finishes positive while continuously held BTCUSDT loses 57.3% over the identical interval from the first strategy entry (2021-05-01 16:45:08 UTC) through the last strategy exit (2022-08-14 16:01:05 UTC). This is a calendar-aligned market comparison: BTC remains exposed between events, while the portfolio strategies are active only around event windows. Under the fitted square-root impact model (15-min decision, first subsequent pre-announcement fill, full inventory liquidation at the 1-min exit), cumulative ROE declines monotonically from 0.840 at 100 USDT per trade to −0.201 at 10,000 USDT, crossing zero between 5,000 and 10,000 USDT.
 
 ### Key findings
 
