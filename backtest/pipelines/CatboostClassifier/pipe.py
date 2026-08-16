@@ -96,7 +96,7 @@ class CatboostClassifierPipeline(BasePipeline):
             dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION),
             bins=[0.01, 0.02, 0.05, 0.1, 0.2],
         )
-        logging.info(f"TopK Accuracy:\n%s", topk_vals)
+        logging.info("Top@k%% accuracy:\n%s", topk_vals)
 
         return model
 
@@ -104,7 +104,7 @@ class CatboostClassifierPipeline(BasePipeline):
 def main():
     configure_logging()
     pipe = CatboostClassifierPipeline()
-    pipe.optimize_parameters()
+    pipe.optimize_parameters(n_trials=100)
 
 
 if __name__ == "__main__":

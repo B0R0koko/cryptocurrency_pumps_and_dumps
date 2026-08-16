@@ -168,11 +168,12 @@ def test_compute_features_matches_feature_definitions(monkeypatch) -> None:
     # [9:00,10:00) are all full pre-rb hours and kept by the normaliser.
     assert hourly_full.shape[0] == 3
 
+    asset_return_mean = float(np.mean(hourly_full["asset_return_pips"].to_numpy()))
     asset_return_std = float(np.std(hourly_full["asset_return_pips"].to_numpy(), ddof=1))
     quote_abs_mean = float(np.mean(hourly_full["quote_abs"].to_numpy()))
     quote_abs_std = float(np.std(hourly_full["quote_abs"].to_numpy(), ddof=1))
 
-    expected_asset_return_zscore = 588.2352941176471 / asset_return_std
+    expected_asset_return_zscore = (588.2352941176471 - asset_return_mean) / asset_return_std
     expected_quote_abs_zscore = (80.0 - quote_abs_mean) / quote_abs_std
 
     assert np.isclose(features[FeatureType.ASSET_RETURN.col_name(window)], expected_return)
@@ -357,6 +358,7 @@ def _calendar_anchored_compute_features(writer: PumpsFeatureWriter, df: pl.DataF
         quote_abs=pl.col("quote_abs").sum(),
     )
     df_hourly_pre_rb = df_hourly.filter(pl.col(TRADE_TIME) < rb)
+    asset_return_mean = df_hourly_pre_rb.select(pl.col("asset_return_pips").mean()).item()
     asset_return_std = df_hourly_pre_rb.select(pl.col("asset_return_pips").std()).item()
     quote_abs_mean = df_hourly_pre_rb.select(pl.col("quote_abs").mean()).item()
     quote_abs_std = df_hourly_pre_rb.select(pl.col("quote_abs").std()).item()
@@ -374,7 +376,10 @@ def _calendar_anchored_compute_features(writer: PumpsFeatureWriter, df: pl.DataF
             compute_num_trades().alias("num_trades"),
         ).to_dicts()[0]
         h = df_hourly_filtered.select(
-            compute_asset_return_zscore(asset_return_std=asset_return_std).alias("asset_return_zscore"),
+            compute_asset_return_zscore(
+                asset_return_mean=asset_return_mean,
+                asset_return_std=asset_return_std,
+            ).alias("asset_return_zscore"),
             compute_quote_abs_zscore(quote_abs_mean=quote_abs_mean, quote_abs_std=quote_abs_std).alias(
                 "quote_abs_zscore"
             ),
@@ -513,11 +518,10 @@ def test_leak_test_fails_against_calendar_anchored_reference(monkeypatch) -> Non
 
 
 def test_short_offset_zscores_non_nan_on_synthetic_data(monkeypatch) -> None:
-    """Under rb-anchored bars, short-offset z-scores (``5MIN``, ``15MIN``,
-    ``1H``) MUST be non-NaN when the newest hourly bar has any trades AND the
-    historical bars carry any variance. The previous calendar-anchored
-    implementation returned ``NaN`` for these offsets in the vast majority of
-    events; this test locks the improvement in.
+    """Short-offset z-scores must be finite and retain window-specific values.
+
+    A previous implementation silently reused the same hourly numerator for
+    ``5MIN``, ``15MIN`` and ``1H``, making all three columns identical.
     """
     monkeypatch.setattr(
         feature_writer_module,
@@ -549,6 +553,26 @@ def test_short_offset_zscores_non_nan_on_synthetic_data(monkeypatch) -> None:
                 f"{key} is {value!r} — under rb-anchored geometry short-offset z-scores must be non-NaN "
                 f"when the newest hourly bar has trades"
             )
+
+    for feature in (FeatureType.ASSET_RETURN_ZSCORE, FeatureType.QUOTE_ABS_ZSCORE):
+        values = [
+            features[feature.col_name(offset)]
+            for offset in (NamedTimeDelta.FIVE_MINUTES, NamedTimeDelta.FIFTEEN_MINUTES, NamedTimeDelta.ONE_HOUR)
+        ]
+        assert len({round(float(value), 12) for value in values}) == 3, f"{feature.name} reused a numerator: {values}"
+
+
+def test_universe_eligibility_is_exactly_past_only() -> None:
+    rb = datetime(2021, 6, 1, 12, 0)
+    writer: PumpsFeatureWriter = _build_writer(pump_events=[])
+
+    future_only = pl.DataFrame({TRADE_TIME: [rb, rb + timedelta(seconds=1)]})
+    stale_only = pl.DataFrame({TRADE_TIME: [rb - timedelta(days=1)]})
+    eligible = pl.DataFrame({TRADE_TIME: [rb - timedelta(microseconds=1)]})
+
+    assert not writer.has_pre_decision_activity(df_ticks=future_only, rb=rb)
+    assert writer.has_pre_decision_activity(df_ticks=stale_only, rb=rb)
+    assert writer.has_pre_decision_activity(df_ticks=eligible, rb=rb)
 
 
 def test_in_window_features_do_not_see_decision_lag_gap(monkeypatch) -> None:

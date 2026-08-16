@@ -107,8 +107,7 @@ def test_paired_bootstrap_topk_percent_auc_detects_significant_difference() -> N
 
 
 def test_paired_bootstrap_topk_percent_auc_p_value_is_strictly_positive() -> None:
-    """Regression: uncentered percentile estimator could return p=0 exactly.
-    The add-one estimator (1 + count) / (1 + n_bootstrap) always exceeds zero."""
+    """The centred-null add-one test always returns a finite positive p-value."""
     scored_df_good = _build_scored_df(
         n_cross_sections=30,
         cross_section_size=12,

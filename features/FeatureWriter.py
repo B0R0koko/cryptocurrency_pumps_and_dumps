@@ -43,12 +43,19 @@ DECAY_OFFSETS: List[NamedTimeDelta] = [
 ]
 
 # Decision lag between the last trade a feature is allowed to see and the pump
-# announcement time. The portfolio enters at ``T - DECISION_LAG`` (see
-# ``TOPKPortfolio.buy_before``); features must reflect strictly the information
-# available at that entry time. The interval ``[T - DECISION_LAG, T]`` must
-# never contribute to any feature. Changing this constant requires regenerating
-# all feature parquets from raw trades.
+# announcement time. The portfolio submits its entry at ``T - DECISION_LAG``
+# and fills on the first subsequent pre-announcement trade (see
+# ``TOPKPortfolio.buy_before``); features must reflect only information
+# available when that order is submitted. The interval
+# ``[T - DECISION_LAG, T]`` must never contribute to any feature. Changing this
+# constant requires regenerating all feature parquets from raw trades.
 DECISION_LAG: timedelta = timedelta(minutes=15)
+
+# Normalizer statistics are estimated from a fixed, past-only history whose
+# right edge is the decision time. Candidate assets must also have traded
+# recently enough that the backtest can form a contemporaneous entry price.
+NORMALIZER_LOOKBACK: timedelta = timedelta(days=30)
+ELIGIBILITY_LOOKBACK: timedelta = timedelta(days=1)
 
 
 def get_currency_pairs(bounds: Bounds) -> List[CurrencyPair]:
@@ -124,6 +131,17 @@ class PumpsFeatureWriter:
         )
         return df_trades
 
+    @staticmethod
+    def has_pre_decision_activity(df_ticks: pl.DataFrame, rb: datetime) -> bool:
+        """Return whether the asset traded in the exact past-only eligibility window."""
+        return not df_ticks.filter(
+            pl.col(TRADE_TIME).is_between(
+                rb - ELIGIBILITY_LOOKBACK,
+                rb,
+                closed="left",
+            )
+        ).is_empty()
+
     def _num_prev_pumps(self, currency_pair: CurrencyPair, pump_event: PumpEvent) -> int:
         pump_times: List[datetime] = self._pump_times_by_currency.get(currency_pair.name, [])
         return bisect_left(pump_times, pump_event.time)
@@ -155,13 +173,12 @@ class PumpsFeatureWriter:
         when ``rb`` is at ``HH:MM:SS.uuu`` the offset is ``MM*60 + SS + uuu/1e6``
         seconds so bar edges land on the ``:MM:SS.uuu`` grid.
 
-        In-window numerators share the same rb-anchored bars: for a feature
-        offset ``X`` the z-score numerator averages over the newest
-        ``ceil(X / 1h)`` bars (i.e. bars covering ``[rb - ceil(X/1h)*1h, rb)``,
-        the smallest union that contains ``[rb - X, rb)``). This guarantees
-        short-offset z-scores (``5MIN``, ``15MIN``, ``1H``) are non-NaN whenever
-        the newest bar carries any trades, and it keeps the numerator and the
-        std/mean denominators on one grid.
+        For windows of at least one hour, z-score numerators average the exact
+        union of rb-anchored hourly bars in ``[rb-X, rb)``. For the 5- and
+        15-minute windows, the exact raw-trade window is converted to an hourly
+        rate before comparison with the historical hourly moments. Consequently
+        ``@5MIN``, ``@15MIN`` and ``@1H`` retain distinct information while every
+        numerator still ends strictly before ``rb``.
 
         Note: on-disk features from earlier runs (calendar-anchored bars) are
         NOT equivalent and must be regenerated end-to-end.
@@ -189,6 +206,7 @@ class PumpsFeatureWriter:
         # After the strict pre-rb truncation this should be empty, but the
         # invariant is cheap and makes downstream code auditable.
         df_hourly_full: pl.DataFrame = df_hourly.filter(pl.col(TRADE_TIME) + pl.duration(hours=1) <= rb)
+        asset_return_mean: float = df_hourly_full.select(pl.col("asset_return_pips").mean()).item()
         asset_return_std: float = df_hourly_full.select(pl.col("asset_return_pips").std()).item()
         quote_abs_mean: float = df_hourly_full.select(pl.col("quote_abs").mean()).item()
         quote_abs_std: float = df_hourly_full.select(pl.col("quote_abs").std()).item()
@@ -200,12 +218,8 @@ class PumpsFeatureWriter:
             lb: datetime = rb - window.get_td()
             df_filtered: pl.DataFrame = df.filter(pl.col(TRADE_TIME).is_between(lb, rb, closed="left"))
 
-            # Z-score numerator: newest ``ceil(offset / 1h)`` rb-anchored bars.
-            # For offset < 1h this is a single bar (the newest); for offset >= 1h
-            # it grows one bar per hour of coverage.
-            n_bars_needed: int = -(-int(window.get_td().total_seconds()) // int(one_hour.total_seconds()))
-            hourly_lb: datetime = rb - one_hour * n_bars_needed
-            df_hourly_filtered: pl.DataFrame = df_hourly_full.filter(pl.col(TRADE_TIME) >= hourly_lb)
+            window_hours: float = window.get_td().total_seconds() / one_hour.total_seconds()
+            df_hourly_filtered: pl.DataFrame = df_hourly_full.filter(pl.col(TRADE_TIME) >= lb)
 
             window_values: Dict[str, Any] = df_filtered.select(
                 compute_return().alias("asset_return"),
@@ -215,12 +229,35 @@ class PumpsFeatureWriter:
                 compute_flow_imbalance().alias("flow_imbalance"),
                 compute_num_trades().alias("num_trades"),
             ).to_dicts()[0]
-            hourly_values: Dict[str, Any] = df_hourly_filtered.select(
-                compute_asset_return_zscore(asset_return_std=asset_return_std).alias("asset_return_zscore"),
-                compute_quote_abs_zscore(quote_abs_mean=quote_abs_mean, quote_abs_std=quote_abs_std).alias(
-                    "quote_abs_zscore"
-                ),
-            ).to_dicts()[0]
+            if window_hours < 1.0:
+                # Use the exact short window rather than silently reusing the
+                # same full one-hour bar for 5MIN, 15MIN and 1H.
+                window_return: Any = window_values["asset_return"]
+                window_quote_abs: Any = df_filtered.select(pl.col("quote_abs").sum()).item()
+                asset_return_hourly: Any = window_return / window_hours if window_return is not None else None
+                quote_abs_hourly: Any = window_quote_abs / window_hours if window_quote_abs is not None else None
+                hourly_values: Dict[str, Any] = {
+                    "asset_return_zscore": (
+                        (asset_return_hourly - asset_return_mean) / asset_return_std
+                        if asset_return_hourly is not None and asset_return_std not in (None, 0)
+                        else None
+                    ),
+                    "quote_abs_zscore": (
+                        (quote_abs_hourly - quote_abs_mean) / quote_abs_std
+                        if quote_abs_hourly is not None and quote_abs_std not in (None, 0)
+                        else None
+                    ),
+                }
+            else:
+                hourly_values = df_hourly_filtered.select(
+                    compute_asset_return_zscore(
+                        asset_return_mean=asset_return_mean,
+                        asset_return_std=asset_return_std,
+                    ).alias("asset_return_zscore"),
+                    compute_quote_abs_zscore(quote_abs_mean=quote_abs_mean, quote_abs_std=quote_abs_std).alias(
+                        "quote_abs_zscore"
+                    ),
+                ).to_dicts()[0]
 
             values: Dict[str, float] = {
                 FeatureType.ASSET_RETURN.col_name(offset=window): window_values["asset_return"],
@@ -241,7 +278,13 @@ class PumpsFeatureWriter:
         # Price decay
         for decay_window in DECAY_OFFSETS:
             features[f"target_return@{decay_window.get_slug()}"] = (
-                df.filter(pl.col(TRADE_TIME).is_between(pump_event.time, pump_event.time + decay_window.get_td()))
+                df.filter(
+                    pl.col(TRADE_TIME).is_between(
+                        pump_event.time,
+                        pump_event.time + decay_window.get_td(),
+                        closed="left",
+                    )
+                )
                 .select(compute_return())
                 .item()
             )
@@ -249,19 +292,23 @@ class PumpsFeatureWriter:
         return features
 
     def create_cross_section(self, pump_event: PumpEvent, position: int) -> Optional[pl.DataFrame]:
-        bounds: Bounds = Bounds(
-            start_inclusive=pump_event.time - timedelta(days=30),
-            end_exclusive=pump_event.time + timedelta(hours=1),
+        rb: datetime = pump_event.time - DECISION_LAG
+        feature_bounds: Bounds = Bounds(
+            start_inclusive=rb - NORMALIZER_LOOKBACK,
+            end_exclusive=pump_event.time + max(window.get_td() for window in DECAY_OFFSETS),
+        )
+        # Partition discovery is intentionally restricted to the past. Because
+        # the boundary day's partition can contain later trades, exact timestamp
+        # eligibility is checked after loading each candidate below.
+        discovery_bounds: Bounds = Bounds(
+            start_inclusive=rb - ELIGIBILITY_LOOKBACK,
+            end_exclusive=rb,
         )
         pbar = tqdm(desc=f"Loading currency_pairs", position=2 + position, leave=False)
-        currency_pairs: List[CurrencyPair] = get_currency_pairs(bounds=bounds)
+        currency_pairs: List[CurrencyPair] = get_currency_pairs(bounds=discovery_bounds)
 
         if len(currency_pairs) == 0:
             pbar.set_description(f"Error: no currencies in the cross-section of the pump {str(pump_event)}")
-            return None
-
-        if pump_event.currency_pair not in currency_pairs:
-            pbar.set_description(f"Error: no data found for target currency {str(pump_event)}")
             return None
 
         cross_section_features: List[Dict[str, float]] = []
@@ -270,12 +317,24 @@ class PumpsFeatureWriter:
         pbar.total = len(currency_pairs)
 
         for currency_pair in currency_pairs:
-            df: pl.DataFrame = self.load_data_for_currency_pair(bounds=bounds, currency_pair=currency_pair)
-            df = self.preprocess_data_for_currency(df=df)
+            df_ticks: pl.DataFrame = self.load_data_for_currency_pair(
+                bounds=feature_bounds,
+                currency_pair=currency_pair,
+            )
+            eligible: bool = self.has_pre_decision_activity(df_ticks=df_ticks, rb=rb)
+            if not eligible:
+                pbar.update(1)
+                continue
+
+            df: pl.DataFrame = self.preprocess_data_for_currency(df=df_ticks)
             features: Dict[str, Any] = self.compute_features(df=df, currency_pair=currency_pair, pump_event=pump_event)
             features["currency_pair"] = currency_pair.name
             cross_section_features.append(features)
             pbar.update(1)
+
+        if not any(row["currency_pair"] == pump_event.currency_pair.name for row in cross_section_features):
+            pbar.set_description(f"Error: no pre-decision data found for target currency {str(pump_event)}")
+            return None
 
         return pl.DataFrame(data=cross_section_features)
 

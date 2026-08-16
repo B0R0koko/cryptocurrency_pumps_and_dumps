@@ -20,4 +20,9 @@ class ExecutionImpactModel(Protocol):
 class ImpactModelProvider(Protocol):
     """Loads or constructs execution-impact models for a pump/currency context."""
 
-    def get_impact_model(self, pump: PumpEvent, currency_pair: CurrencyPair) -> ExecutionImpactModel: ...
+    def get_impact_model(
+        self,
+        pump: PumpEvent,
+        currency_pair: CurrencyPair,
+        end_exclusive: datetime | None = None,
+    ) -> ExecutionImpactModel: ...

@@ -179,13 +179,14 @@ def plot_topk_percent_curves(
 def plot_classification_metrics(
     df_metrics: pd.DataFrame,
     cols: List[str],
+    title: str = "Classification metrics on TEST",
     save_path: Optional[str] = None,
 ) -> plt.Figure:
     """Bar chart of classification metrics for selected models."""
     plot_cols = [c for c in cols if c in df_metrics.index]
     fig, ax = plt.subplots(figsize=(11, 5))
     df_metrics.loc[plot_cols].plot(kind="bar", ax=ax)
-    ax.set_title("Classification metrics on TEST")
+    ax.set_title(title)
     ax.set_ylabel("Score")
     ax.set_xlabel("Model")
     plt.xticks(rotation=45, ha="right")

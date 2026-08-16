@@ -1,7 +1,6 @@
 from typing import List
 
 import pandas as pd
-from tqdm import tqdm
 
 
 def cross_section_standardize(
@@ -18,13 +17,17 @@ def cross_section_standardize(
     Returns a new DataFrame with an additional ``pump_id`` column (integer
     index of the cross-section in iteration order).
     """
-    dfs: List[pd.DataFrame] = []
+    if not cols_to_scale:
+        result = df.copy().reset_index(drop=True)
+        result["pump_id"] = result.groupby(group_col, sort=False).ngroup()
+        return result
 
-    for i, (_pump_hash, df_cs) in tqdm(enumerate(df.groupby(group_col)), desc="Cross-section standardisation"):
-        df_cs = df_cs.reset_index(drop=True)
-        for col in cols_to_scale:
-            df_cs[col] = (df_cs[col] - df_cs[col].mean()) / df_cs[col].std()
-        df_cs["pump_id"] = i
-        dfs.append(df_cs)
-
-    return pd.concat(dfs).reset_index(drop=True)
+    result = df.copy()
+    grouped = result.groupby(group_col, sort=False)[cols_to_scale]
+    means = grouped.transform("mean")
+    stds = grouped.transform("std").mask(lambda values: values == 0)
+    nuniques = grouped.transform("nunique")
+    scaled = (result[cols_to_scale] - means).div(stds)
+    result[cols_to_scale] = scaled.mask(nuniques == 1, 0.0)
+    result["pump_id"] = result.groupby(group_col, sort=False).ngroup()
+    return result.reset_index(drop=True)

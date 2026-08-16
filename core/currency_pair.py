@@ -80,4 +80,6 @@ def get_cross_section_currencies(hive_dir: Path, bounds: Bounds) -> List[Currenc
             except ValueError:
                 _log.warning("Skipping entry under %s with unparseable pair: %s", directory, symbol_dir)
 
-    return list(all_currency_pairs)
+    # A set is convenient while collecting the union, but exposing its hash-order
+    # makes feature parquet row order (and score-tie handling) process-dependent.
+    return sorted(all_currency_pairs, key=lambda currency_pair: currency_pair.name)

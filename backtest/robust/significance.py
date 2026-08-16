@@ -71,9 +71,9 @@ def _cross_section_indicator_vectors_topk(scored_df: pd.DataFrame, bins: Sequenc
 
     vectors: dict[str, np.ndarray] = {}
     for pump_hash, df_cs in scored_df.groupby(COL_PUMP_HASH, sort=False):
-        df_cs = df_cs.sort_values(by=COL_PROBAS_PRED, ascending=False)
+        df_cs = df_cs.sort_values(by=COL_PROBAS_PRED, ascending=False, kind="stable")
         is_pumped: np.ndarray = df_cs[COL_IS_PUMPED].to_numpy(dtype=bool)
-        if is_pumped.size == 0:
+        if is_pumped.size == 0 or not is_pumped.any():
             continue
         cum_any: np.ndarray = np.logical_or.accumulate(is_pumped)
         k_idxs = np.clip(np.array(bins, dtype=int), 1, is_pumped.size) - 1
@@ -96,9 +96,9 @@ def _cross_section_indicator_vectors_topk_percent(
     bins_array: np.ndarray = np.array(bins, dtype=float)
 
     for pump_hash, df_cs in scored_df.groupby(COL_PUMP_HASH, sort=False):
-        df_cs = df_cs.sort_values(by=COL_PROBAS_PRED, ascending=False)
+        df_cs = df_cs.sort_values(by=COL_PROBAS_PRED, ascending=False, kind="stable")
         is_pumped: np.ndarray = df_cs[COL_IS_PUMPED].to_numpy(dtype=bool)
-        if is_pumped.size == 0:
+        if is_pumped.size == 0 or not is_pumped.any():
             continue
         cum_any: np.ndarray = np.logical_or.accumulate(is_pumped)
         k_raw: np.ndarray = np.ceil(is_pumped.size * bins_array).astype(int)
@@ -316,17 +316,24 @@ def paired_bootstrap_topk_percent_auc_test(
     diffs: np.ndarray = auc_dist_a - auc_dist_b
 
     ci_lower, ci_upper = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
-    # Add-one estimator (North, Curtis, Sham 2002): (1 + count) / (1 + n_bootstrap).
-    # Guarantees a strictly positive p-value even when no bootstrap sample crosses
-    # zero, which the uncentered percentile estimator would report as exactly 0.
+    # Build the bootstrap null distribution by centring the paired per-event
+    # contributions at zero. Counting signs in the ordinary (uncentred)
+    # confidence-interval distribution is not a valid test of H0: difference=0.
+    per_cross_section_auc_a: np.ndarray = np.trapezoid(matrix_a, x=bins_array, axis=1) / normaliser
+    per_cross_section_auc_b: np.ndarray = np.trapezoid(matrix_b, x=bins_array, axis=1) / normaliser
+    paired_contributions: np.ndarray = per_cross_section_auc_a - per_cross_section_auc_b
+    centred_contributions: np.ndarray = paired_contributions - paired_contributions.mean()
+    null_diffs: np.ndarray = centred_contributions[sampled_indices].mean(axis=1)
+
+    # Add-one Monte Carlo estimator: a finite resample cannot report p=0.
     if alternative == "greater":
-        p_value: float = float((1 + int(np.sum(diffs <= 0))) / (1 + n_bootstrap))
+        p_value: float = float((1 + int(np.sum(null_diffs >= observed_diff))) / (1 + n_bootstrap))
     elif alternative == "less":
-        p_value = float((1 + int(np.sum(diffs >= 0))) / (1 + n_bootstrap))
+        p_value = float((1 + int(np.sum(null_diffs <= observed_diff))) / (1 + n_bootstrap))
     else:
-        one_sided_le: float = (1 + int(np.sum(diffs <= 0))) / (1 + n_bootstrap)
-        one_sided_ge: float = (1 + int(np.sum(diffs >= 0))) / (1 + n_bootstrap)
-        p_value = float(min(1.0, 2 * min(one_sided_le, one_sided_ge)))
+        p_value = float(
+            (1 + int(np.sum(np.abs(null_diffs) >= abs(observed_diff)))) / (1 + n_bootstrap)
+        )
 
     return PairedBootstrapTestResult(
         metric="topk_percent_auc",

@@ -61,3 +61,9 @@ def test_all_columns_with_only_eval_fields() -> None:
         eval_fields=["e1"],
     )
     assert fs.all_columns == ["e1"]
+
+
+def test_auto_regressors_never_include_post_announcement_targets() -> None:
+    regressors = FeatureSet.auto().regressors
+    assert regressors
+    assert not any(column.startswith("target_return@") for column in regressors)

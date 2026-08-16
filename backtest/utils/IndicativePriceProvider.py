@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -72,28 +72,28 @@ class IndicativePriceProvider:
 
     def get_indicative_price(self, symbol: str, ts: datetime) -> Optional[float]:
         """
-        Return the nearest minute-level indicative price for `symbol` at timestamp `ts`.
+        Return the most recent *completed* minute-level VWAP at ``ts``.
 
-        Preference order:
-        1. Most recent minute at or before `ts`.
-        2. Earliest minute after `ts` on the same day.
+        A kline labelled 10:00 contains trades through 10:00:59.999; using it
+        at 10:00:05 would leak the rest of that minute. We therefore require
+        the bar's right edge to be no later than ``ts`` and never fall forward
+        to a later bar.
         """
-        series: Optional[pd.Series] = self._load_symbol_day_vwap_series(
-            symbol=symbol,
-            day=ts.date(),
-        )
-        if series is None or series.empty:
-            return None
+        # At the beginning of a UTC day there may be no completed current-day
+        # bar yet. Look back one date so 00:00:xx can use the completed 23:59
+        # bar instead of failing or falling forward.
+        for day in (ts.date(), ts.date() - timedelta(days=1)):
+            series: Optional[pd.Series] = self._load_symbol_day_vwap_series(
+                symbol=symbol,
+                day=day,
+            )
+            if series is None or series.empty:
+                continue
 
-        minute = ts.replace(second=0, microsecond=0)
-        upto = series.loc[series.index <= minute]
-
-        if not upto.empty:
-            return float(upto.iloc[-1])
-
-        after = series.loc[series.index >= minute]
-        if not after.empty:
-            return float(after.iloc[0])
+            last_completed_open = pd.Timestamp(ts) - pd.Timedelta(minutes=1)
+            completed = series.loc[:last_completed_open]
+            if not completed.empty:
+                return float(completed.iloc[-1])
         return None
 
     def get_quote_to_usdt_indicative_price(self, quote_asset: str, ts: datetime) -> float:

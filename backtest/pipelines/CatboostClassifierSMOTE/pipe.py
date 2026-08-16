@@ -59,11 +59,7 @@ class CatboostClassifierSMOTEPipeline(BasePipeline):
 
     @overrides
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Define all data preprocessing steps here.
-
-        Survivorship filtering is applied to the TRAIN split only in
-        :meth:`BasePipeline.build_datasets`.
-        """
+        """Apply only transformations available without post-pump outcomes."""
         df = add_col_pump_id(df=df)
         df[COL_IS_PUMPED] = df[COL_CURRENCY_PAIR] == df[COL_PUMPED_CURRENCY_PAIR]  # attach binary target
         powerlaw_cols: List[str] = FeatureType.POWERLAW_ALPHA.col_names(offsets=REGRESSOR_OFFSETS)
@@ -133,14 +129,14 @@ class CatboostClassifierSMOTEPipeline(BasePipeline):
             dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION),
             bins=[0.01, 0.02, 0.05, 0.1, 0.2],
         )
-        logging.info(f"TopK Accuracy:\n%s", topk_vals)
+        logging.info("Top@k%% accuracy:\n%s", topk_vals)
         return model
 
 
 def main():
     configure_logging()
     pipe = CatboostClassifierSMOTEPipeline()
-    pipe.optimize_parameters()
+    pipe.optimize_parameters(n_trials=100)
 
 
 if __name__ == "__main__":

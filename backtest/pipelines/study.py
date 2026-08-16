@@ -2,6 +2,7 @@ import logging
 
 import optuna
 from optuna import Study
+from optuna.samplers import TPESampler
 
 from core.paths import SQLITE_URL
 
@@ -21,6 +22,7 @@ def create_study(study_name: str, start_new: bool = True) -> Study:
         delete_study_if_exists(study_name=study_name)
     study: Study = optuna.create_study(
         direction="maximize",
+        sampler=TPESampler(seed=42),
         storage=SQLITE_URL,
         study_name=study_name,
         load_if_exists=True,

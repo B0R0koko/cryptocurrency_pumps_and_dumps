@@ -51,9 +51,7 @@ class RandomForestPipeline(BasePipeline):
 
     @overrides
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """sklearn RandomForest does not accept NaN. Impute NaNs with cross-section
-        medians and then apply cross-section standardisation.
-        """
+        """Impute NaNs with past-only priors, then standardize by cross-section."""
         df = add_col_pump_id(df=df)
         powerlaw_cols = FeatureType.POWERLAW_ALPHA.col_names(offsets=REGRESSOR_OFFSETS)
         df[powerlaw_cols] = df[powerlaw_cols].clip(1, 2)
@@ -97,11 +95,11 @@ class RandomForestPipeline(BasePipeline):
             dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION),
             bins=[0.01, 0.02, 0.05, 0.1, 0.2],
         )
-        logging.info(f"TopK Accuracy:\n%s", topk_vals)
+        logging.info("Top@k%% accuracy:\n%s", topk_vals)
         return model
 
 
 if __name__ == "__main__":
     configure_logging()
     pipeline = RandomForestPipeline()
-    pipeline.optimize_parameters()
+    pipeline.optimize_parameters(n_trials=100)

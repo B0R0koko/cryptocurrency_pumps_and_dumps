@@ -12,16 +12,16 @@ A pump-and-dump (P&D) is a coordinated market-manipulation scheme. Organizers ac
 
 The image above shows a real test-set event from our dataset: a 4% jump at the announcement (left panel) followed by a 30% drawdown within 40 seconds (right panel).
 
-The detection task in this repository is the **target-prediction** variant: given an announcement is about to happen, rank all ~290 BTC-quoted pairs on Binance by their probability of being the manipulation target, using only microstructure signals observable **15 minutes** *before* the announcement (order-flow imbalance, slippage, multi-day trade counts, lifetime prior-pump count). This is an extreme-imbalance cross-sectional classification problem (1 positive per ~290 negatives), which is the reason class-imbalance handling drives most of the modeling choices below.
+The detection task in this repository is the **target-prediction** variant: given an announcement is about to happen, rank all eligible BTC-quoted pairs on Binance by their probability of being the manipulation target, using only microstructure signals observable **15 minutes** *before* the announcement (order-flow imbalance, slippage, multi-day trade counts, lifetime prior-pump count). The test cross-section averages about 288 assets, with one positive target, so class-imbalance handling drives most of the modeling choices below.
 
 ## About this project
 
-This repository contains the code, data manifests, and experiments backing the IEEE Access submission *"Mitigating Class Imbalance in Pump-and-Dump Detection"* (Access-2026-02451). It predicts which ticker in a given cross-section is the pump target, using microstructure features and ranking-aware learning on a panel with a negative/positive imbalance ratio of 154–291 (train → test).
+This repository contains the code, data manifests, and experiments backing the IEEE Access submission *"Mitigating Class Imbalance in Pump-and-Dump Detection"* (Access-2026-02451). It predicts which ticker in a given cross-section is the pump target, using microstructure features and ranking-aware learning on a panel with a negative/positive imbalance ratio of about 154–287 (train → test).
 
 ## Highlights
 
-- **Problem.** For each announced P&D event on Binance, pick the manipulated ticker out of the full cross-section of BTC-quoted pairs active at that time (train avg. 155, validation 239, test 290 candidates per event).
-- **Dataset.** 410 labeled Binance BTC-pair pump events after filtering (Dec 2018 – Mar 2024), split into 227 train / 103 validation / 80 test positives (survivorship filter is applied to train only, so validation and test include events whose pump did not reach top-10 by 1-minute post-pump return).
+- **Problem.** For each announced P&D event on Binance, pick the manipulated ticker from BTC-quoted pairs with at least one trade in the exact past-only eligibility window (train avg. 155, validation 237, test 288 candidates per event).
+- **Dataset.** The manifest contains 498 unique Binance BTC-pair announcements (Jan 2018 – Aug 2022). Required pre-decision history is available for 473 events, split into 290 train / 103 validation / 80 test positives. No event is filtered using a post-announcement outcome.
 - **Approach.** Cross-sectionally standardized microstructure features + CatBoost classifier with `Top@k%AUC` early stopping, evaluated against logistic regression, the random forest algorithm, the CatBoost ranker, and CatBoost + SMOTE baselines.
 - **Execution-aware backtest.** Square-root market-impact model (Tóth / Donier–Bonart) fitted per asset from trade-level candles (5-min pre-pump entry, 5-sec sell-only post-pump exit), translated into size-dependent VWAP slippage.
 
@@ -31,18 +31,22 @@ This repository contains the code, data manifests, and experiments backing the I
 
 ## Main Results
 
-Evaluation on 80 held-out P&D cross-sections (test period > 2021-05-01).
+Evaluation on 80 held-out P&D cross-sections (test period >= 2021-05-01).
+
+Notation is consistent throughout: `Top@k` and `Top@k%` are fixed-count and percentage hit rates; `Top@kAUC` and `Top@k%AUC` are the corresponding curve areas. This project reports and optimizes `Top@k%AUC`.
+
+Final model selection is performed before test evaluation. Across all 11 tuned and untuned candidates, CatBoost + Top@k%AUC early stopping has the highest validation Top@k%AUC (0.667), ahead of untuned CatBoost (0.615) and tuned logistic regression (0.608). That frozen validation winner is the only model used for the test portfolio; test comparisons of the other models are descriptive.
 
 ### Top@k accuracy (test set)
 
 | Model                         | Top@1  | Top@2  | Top@5  | Top@10 | Top@20 | Top@30 |
 |-------------------------------|:------:|:------:|:------:|:------:|:------:|:------:|
-| Logistic regression + Tuned   | 0.113  | 0.150  | 0.375  | 0.525  | 0.663  | **0.750** |
-| Random forest + Tuned         | 0.075  | 0.175  | **0.413** | **0.550** | **0.675** | 0.738 |
-| CatBoost classifier + Tuned   | 0.125  | **0.238** | 0.388  | 0.475  | 0.638  | 0.738 |
-| CatBoost + SMOTE + Tuned      | 0.063  | 0.125  | 0.238  | 0.350  | 0.438  | 0.525 |
-| CatBoost ranker + Tuned       | **0.138** | 0.163  | 0.325  | 0.425  | 0.563  | 0.663 |
-| **CatBoost + Top@k%AUC ES**   | 0.075  | 0.200  | 0.363  | 0.463  | 0.613  | 0.738 |
+| Logistic regression + Tuned   | 0.113  | 0.175  | **0.400** | **0.575** | **0.713** | 0.750 |
+| Random forest + Tuned         | 0.113  | 0.175  | 0.375  | 0.513  | 0.663  | **0.763** |
+| CatBoost classifier + Tuned   | 0.088  | 0.188  | 0.375  | 0.513  | 0.650  | 0.713 |
+| CatBoost + SMOTE + Tuned      | 0.075  | 0.113  | 0.213  | 0.250  | 0.338  | 0.413 |
+| CatBoost ranker + Tuned       | 0.100  | 0.163  | 0.300  | 0.425  | 0.538  | 0.575 |
+| **CatBoost + Top@k%AUC ES**   | **0.150** | **0.225** | 0.388 | 0.563 | 0.663 | 0.750 |
 
 ### Top@k%AUC with 95% bootstrap CIs
 
@@ -50,35 +54,35 @@ Top@k%AUC is integrated and normalized over the low-k% region k% ∈ (0, 20%], s
 
 | Model                       | Top@k%AUC  | 95% CI             |
 |-----------------------------|:----------:|:------------------:|
-| CatBoost + Top@k%AUC ES     | 0.659      | [0.582, 0.740]     |
-| **Random forest + Tuned**   | **0.683**  | **[0.600, 0.762]** |
+| **CatBoost + Top@k%AUC ES** | **0.674** | **[0.592, 0.755]** |
+| CatBoost classifier         | 0.627     | [0.546, 0.706]     |
 
-Logistic regression + Tuned attains the second-highest Top@k%AUC point estimate (0.680), followed by CatBoost classifier + Tuned (0.674) and CatBoost + Top@k%AUC ES (0.659); the paired ES vs. random forest + Tuned bootstrap test does NOT reject H0: ES > RF+Tuned at the 5% level (see below).
+Tuned logistic regression has the highest test Top@k%AUC point estimate (0.695), followed by CatBoost + Top@k%AUC ES (0.674), tuned random forest (0.668), tuned CatBoost (0.664), and untuned logistic regression (0.660). The paired comparator is selected only on validation data, which selects untuned CatBoost; the pre-specified one-sided paired test favors ES at the 5% level.
 
-### Portfolio performance (CatBoost + Top@k%AUC ES, 25 bps round-trip, no reinvestment, mid-price entry/exit)
+### Portfolio performance (CatBoost + Top@k%AUC ES, 25 bps round-trip, no reinvestment, trade-price entry/exit)
 
-| k  | Avg. trade return | Annualized return | Annualized vol. | Sharpe |
+| k  | Avg. event return | Annualized return | Annualized vol. | Sharpe |
 |:--:|:-----------------:|:-----------------:|:---------------:|:------:|
-| 1  | 0.0135 | 0.6812 | 0.8220 | 0.83 |
-| 2  | 0.0230 | 1.1593 | 0.5879 | 1.97 |
-| 5  | 0.0131 | 0.6584 | 0.2801 | **2.35** |
-| 10 | 0.0067 | 0.3356 | 0.1546 | 2.17 |
-| 20 | 0.0048 | 0.2408 | 0.1045 | 2.30 |
-| 30 | 0.0025 | 0.1270 | 0.0771 | 1.65 |
+| 1  | 0.0119 | 0.7382 | 0.7382 | 1.00 |
+| 2  | 0.0115 | 0.7121 | 0.4131 | 1.72 |
+| 5  | 0.0115 | 0.7158 | 0.2815 | **2.54** |
+| 10 | 0.0068 | 0.4232 | 0.2063 | 2.05 |
+| 20 | 0.0040 | 0.2456 | 0.1172 | 2.10 |
+| 30 | 0.0026 | 0.1608 | 0.0801 | 2.01 |
 
-The k=5 portfolio maximises Sharpe (2.35), with k=20 close behind (2.30). Under the fitted square-root impact model (15-min entry, 1-min exit, k=5) cumulative ROE declines monotonically from 0.72 at 100 USDT per trade to −0.42 at 10,000 USDT, crossing zero between 2,000 and 5,000 USDT — the edge survives only at retail order sizes, and larger notionals would need TWAP/VWAP splitting to recover it. A BTC buy-and-hold baseline over the same event windows delivers an annualized return of −0.425 (Sharpe −0.665).
+The pre-specified k=5 portfolio maximises Sharpe (2.54). Under the fitted square-root impact model (15-min decision, first subsequent pre-announcement fill, 1-min exit), cumulative ROE declines monotonically from 0.801 at 100 USDT per trade to −0.294 at 10,000 USDT, crossing zero between 5,000 and 10,000 USDT. A BTC buy-and-hold baseline over the same event calendar delivers an annualized return of −0.444 (Sharpe −0.977).
 
 ### Key findings
 
 1. **Cross-sectional standardization matters.** Every learned model beats the random baseline at every k; the signal is in the engineered microstructure features, not just the model.
-2. **CatBoost + Top@k%AUC ES has the strongest validation Top@k%AUC** (used to select it for the portfolio backtest) and on test set ES (0.659) is statistically indistinguishable from random forest + Tuned (0.683), the top point-estimate. ES also has the second-highest PR-AUC (0.075), the imbalance-aware classification metric.
-3. **SMOTE fails here.** Synthetic oversampling in this high-dimensional, cross-sectionally standardized panel *degrades* performance at every Top@k threshold (tuned SMOTE reaches Top@k%AUC 0.490 vs 0.683 for random forest + Tuned), a cautionary tale against applying imbalance tricks uncritically. Root causes: bounded sign-meaningful features, cross-sectional reference violated by nearest-neighbor interpolation across events, and high-dimensional sparsity with only 227 training positives.
-4. **Ranker underperforms on the aggregate metric.** The tuned CatBoost ranker (YetiRank) ties for the best Top@1 point estimate (0.138) but reaches Top@k%AUC of only 0.592, materially below the class-weighted classifiers. In a 1-vs-~290 cross-section, most pairwise gradient mass is negative-vs-negative noise; class-weighted log-loss concentrates gradient on the actually relevant decision boundary.
-5. **Paired-bootstrap significance.** Paired bootstrap of Top@k%AUC ES vs. random forest + Tuned gives an observed Top@k%AUC difference of −0.024 with 95% CI [−0.069, 0.018] and a one-sided p-value of 0.867 (alternative: ES > RF+Tuned). The CI includes zero, so the two models are statistically indistinguishable on aggregate Top@k%AUC at the 5% level.
-6. **Robustness.** Retraining ES on random 70% subsets of the training set yields σ(Top@k%AUC) = 0.020 (80% in [0.635, 0.685]). The early test subperiod (May 2021 – Jun 2022, 76 events) scores 0.661, close to the full-test 0.659; the late subperiod (Jul 2022 – Mar 2024) contains only 4 events and is excluded via a `min_pumps=10` guard. All results are exactly reproducible from the released code (fixed seeds and deterministic feature ordering).
-7. **Feature-window audit.** The z-score normaliser look-ahead was fixed, the feature cutoff was tightened from T − 1 hour to T − 15 minutes to match the portfolio's entry time, and the hourly normaliser bars were re-anchored to that cutoff. Top predictors are prior-pump history, long-horizon trade counts (2D, 14D, 7D), multi-day slippage imbalance, and intra-day standardized returns.
+2. **CatBoost + Top@k%AUC ES is strongest at the lowest fixed-count thresholds.** It leads Top@1 (0.150) and Top@2 (0.225), and it leads all three reported classification metrics: PR-AUC 0.084, F1 0.150, and balanced accuracy 0.574. The untuned CatBoost classifier leads Top@1% at 0.325, while tuned logistic regression leads the broader aggregate Top@k%AUC at 0.695.
+3. **SMOTE fails here.** Synthetic oversampling in this high-dimensional, cross-sectionally standardized panel degrades performance: tuned SMOTE reaches Top@k%AUC 0.415 versus 0.695 for tuned logistic regression. Root causes include bounded sign-meaningful features, cross-event interpolation that breaks the cross-sectional reference, and high-dimensional sparsity with only 290 training positives.
+4. **Ranker underperforms on the aggregate metric.** The tuned CatBoost ranker (YetiRank) reaches Top@k%AUC 0.555, materially below the leading classifiers. In a 1-vs-~287 test cross-section, much of the ordinal supervision concerns negative-vs-negative ordering, whereas class-weighted log-loss focuses on separating the single target.
+5. **Paired-bootstrap significance.** The non-ES comparator is selected on validation only (untuned CatBoost). Paired bootstrap gives ES minus comparator Top@k%AUC of 0.0473 with two-sided 95% CI [−0.0005, 0.0938] and a one-sided p-value of 0.0235. The pre-specified one-sided test favors ES at the 5% level, while the two-sided interval narrowly includes zero.
+6. **Robustness.** Retraining ES on random 70% subsets of the training set yields σ(Top@k%AUC) = 0.013 and a central 80% interval [0.662, 0.693]. The early test subperiod (May 2021 – May 2022, 76 events) scores 0.676; the late Jun–Aug 2022 subperiod contains only four events and is excluded by a `min_pumps=10` guard.
+7. **Feature-window audit.** All regressors end strictly at T − 15 minutes; universe membership uses the exact past-only day; sub-hour z-scores use distinct exact windows; post-announcement outcomes never filter the sample; and validation/test values never supply training imputation priors. Top predictors include prior-pump history, multi-day trade counts, standardized quote volume, and standardized returns.
 
-The full manuscript is in `paper/src/access.pdf` with a latexdiff-highlighted revision version in `paper/src/access_highlighted.pdf` (built locally, see step 9).
+The final manuscript is in `paper/src/access.tex`, with the compiled paper at `paper/src/access.pdf`. The latexdiff comparison against the original submission is in `paper/src/access_highlighted.tex` and `paper/src/access_highlighted.pdf`.
 
 ---
 
@@ -113,7 +117,7 @@ Make sure this directory exists and is writable before running the pipeline.
 
 Already checked in:
 
-- `resources/pumps.json` — 175 Telegram-curated events (Dec 2018 – Apr 2024) plus 1111 events from La Morgia et al. 2020/2021, filtered by our inclusion criteria (ticker identification, ±5 min announcement regularity, 5%/3× price-volume verification). Candidates that failed any criterion were dropped, leaving 410 valid Binance BTC-pair events.
+- `resources/pumps.json` — 498 unique Binance BTC-pair announcement labels from Jan 2018 through Aug 2022. Each row provides a target pair, exchange, and UTC timestamp. Of these, 473 can be materialized from the local market archive; the 25 unavailable events are recorded in `resources/dropped_pumps.json`.
 
 No action needed for this step; the JSON file is versioned.
 
@@ -135,7 +139,7 @@ This iterates all BTC-quoted pairs that appear in `resources/pumps.json` (+/- a 
 poetry run python -m preprocessing.run
 ```
 
-This walks `raw/binance/spot/trades/` and writes `transformed/binance/spot/trades/<pair>/<date>.parquet`. The HIVE layout enables cheap per-day / per-pair scans with Polars.
+This walks `raw/binance/spot/trades/` and writes HIVE partitions under `transformed/binance/spot/trades/date=YYYY-MM-DD/symbol=<PAIR>/`. The layout enables cheap per-day/per-pair scans with Polars.
 
 ### 6. Build features
 
@@ -143,7 +147,7 @@ This walks `raw/binance/spot/trades/` and writes `transformed/binance/spot/trade
 poetry run python -m features.FeatureWriter
 ```
 
-For each pump event in `resources/pumps.json`, this materializes the cross-section (all tickers active within the relevant window) and computes microstructure features (asset returns, flow imbalance, slippage, aggressor imbalance, number of trades, etc.) at multiple offsets from 5 min to 14 days before the announcement. Output: one parquet per event under `/data/pumps/data/features/`.
+For each pump event in `resources/pumps.json`, this materializes the cross-section (all tickers active in the exact day ending at `T - 15 min`) and computes microstructure features (asset returns, flow imbalance, slippage, aggressor imbalance, number of trades, etc.) at multiple offsets from 5 min to 14 days before the decision cutoff. Output: one parquet per usable event under `/data/pumps/data/features/pumps/`.
 
 CPU-parallel via `run_parallel(cpu_count=...)`.
 
@@ -162,23 +166,23 @@ Under the hood the notebook uses the pipelines in `backtest/pipelines/`:
 - `RandomForest` — tuned baseline
 - `CatboostClassifier` — tuned CatBoost classifier
 - `CatboostClassifierSMOTE` — CatBoost with SMOTE oversampling
-- `CatboostClassifierTop@k%AUC` — CatBoost with `Top@k%AUC` early stopping (our best model)
+- `CatboostClassifierTOPKAUC` — CatBoost with `Top@k%AUC` early stopping
 - `CatboostRanker` — learning-to-rank baseline
 
-Each pipeline handles: data split (train < 2020-09-01, val 2020-09-01 to 2021-05-01, test > 2021-05-01), cross-sectional standardization, Optuna hyperparameter tuning (10 trials per pipeline, 1000 for CatBoost + Top@k%AUC early stopping), training, and scoring. Results and plots land in `notebooks/analysis_outputs/` and `notebooks/images/`.
+Each pipeline handles: data split (train < 2020-09-01, validation in [2020-09-01, 2021-05-01), test >= 2021-05-01), cross-sectional standardization, Optuna hyperparameter tuning (10 trials per pipeline, 1000 for CatBoost + Top@k%AUC early stopping), training, and scoring. The notebook first reports validation Top@k, Top@k%, Top@k%AUC, and classification tables/figures, selects the final model by validation Top@k%AUC, and only then opens the test split for final metrics and portfolio backtesting. Results and plots land in `notebooks/analysis_outputs/` and `notebooks/images/`.
 
 ### 8. Portfolio simulation and price-impact backtest
 
-`notebooks/visualisations.ipynb` builds the top-k portfolio under the fitted square-root impact model and produces the plots in Section IV of the paper. The impact model is fitted per asset from trade-level candles; VWAP slippage for size Q is `I_vwap(Q) = (2/3) * β * sqrt(Q)`.
+`notebooks/research_notebook.ipynb` runs the Top@k portfolio and fitted square-root impact analysis; `notebooks/visualisations.ipynb` regenerates the introductory event plot. The impact model is fitted per asset from trade-level candles ending at the transaction being priced; VWAP slippage for size Q is `I_vwap(Q) = (2/3) * β * sqrt(Q)`.
 
 ### 9. Compile the paper
 
 ```bash
 just paper              # builds paper/src/access.pdf
-just paper-highlighted  # builds paper/src/access_highlighted.pdf (latexdiff revision version)
+just paper-highlighted  # builds the current-vs-original highlighted PDF
 ```
 
-LaTeX sources live in `paper/src/`, with the IEEE Access class and its Type 1 fonts in `paper/src/styles/` and figures in `paper/src/images/`; the recipes put both directories on the pdflatex search path. `paper/overleaf_access/` mirrors the same files in the flat layout Overleaf expects.
+The final LaTeX source and PDF live in `paper/src/`, figures live in `paper/src/images/`, and the IEEE Access class and Type 1 fonts live in `paper/styles/`. All result tables are inlined in `access.tex`.
 
 ---
 

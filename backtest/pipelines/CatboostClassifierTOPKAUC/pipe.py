@@ -70,7 +70,9 @@ def _topkpauc_kernel(
 
         sub_scores = scores_by_group[start:end]
         sub_pumped = is_pumped_by_group[start:end]
-        order = np.argsort(-sub_scores)
+        # Stable ordering makes tied CatBoost leaf scores agree with the final
+        # pandas metric and with deterministic currency ordering in feature files.
+        order = np.argsort(-sub_scores, kind="mergesort")
 
         any_so_far = False
         any_arr = np.empty(n_rows, dtype=np.bool_)
@@ -272,7 +274,7 @@ class CatboostClassifierTOPKAUCPipeline(BasePipeline):
             dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION),
             bins=[0.01, 0.02, 0.05, 0.1, 0.2],
         )
-        logging.info(f"TopK Accuracy:\n%s", topk_vals)
+        logging.info("Top@k%% accuracy:\n%s", topk_vals)
 
         return model
 
@@ -280,7 +282,7 @@ class CatboostClassifierTOPKAUCPipeline(BasePipeline):
 def main():
     configure_logging()
     pipe = CatboostClassifierTOPKAUCPipeline()
-    pipe.optimize_parameters()
+    pipe.optimize_parameters(n_trials=100)
 
 
 if __name__ == "__main__":

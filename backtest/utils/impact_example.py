@@ -56,6 +56,7 @@ def _load_trades_from_hive(
 def find_best_impact_example(
     dataset: Dataset,
     lookback_days: int = 14,
+    buy_before: timedelta = timedelta(minutes=15),
     min_candles: int = 500,
     min_side_samples: int = 25,
     min_positive_impacts: int = 50,
@@ -63,8 +64,8 @@ def find_best_impact_example(
     """
     Search pump events in *dataset* for the best asset to illustrate the sqrt impact model.
 
-    Loads trades from hive, resamples into 1-minute candles, and fits using
-    net volume as the order flow proxy.
+    Loads only trades available before the simulated entry, resamples them
+    into 5-minute candles, and fits using net volume as the order-flow proxy.
     """
     hive = pl.scan_parquet(Exchange.BINANCE_SPOT.get_hive_location(), hive_partitioning=True)
     price_provider = IndicativePriceProvider()
@@ -74,7 +75,11 @@ def find_best_impact_example(
 
     for pump in dataset.get_pumps():
         cp = pump.currency_pair
-        bounds = Bounds(start_inclusive=pump.time - timedelta(days=lookback_days), end_exclusive=pump.time)
+        entry_time = pump.time - buy_before
+        bounds = Bounds(
+            start_inclusive=entry_time - timedelta(days=lookback_days),
+            end_exclusive=entry_time,
+        )
         trades = _load_trades_from_hive(hive, bounds, cp)
         if len(trades) < min_candles:
             continue
@@ -84,7 +89,7 @@ def find_best_impact_example(
             continue
 
         try:
-            q2u = price_provider.get_quote_to_usdt_indicative_price(cp.term, pump.time)
+            q2u = price_provider.get_quote_to_usdt_indicative_price(cp.term, entry_time)
         except FileNotFoundError:
             q2u = 1.0
 

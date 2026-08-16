@@ -16,6 +16,7 @@ expected_bounds: List[Bounds] = [
     Bounds.for_days(date(2025, 1, 22), date(2025, 1, 25)),
     Bounds.for_days(date(2025, 1, 25), date(2025, 1, 28)),
     Bounds.for_days(date(2025, 1, 28), date(2025, 1, 31)),
+    Bounds.for_days(date(2025, 1, 31), date(2025, 2, 1)),
 ]
 
 
@@ -23,8 +24,7 @@ def test_bounds_generate_overlapping_bounds():
     bounds: Bounds = Bounds.for_days(date(2025, 1, 1), date(2025, 2, 1))
     sub_bounds: List[Bounds] = bounds.generate_overlapping_bounds(step=timedelta(days=3), interval=timedelta(days=3))
 
-    for sub_bound, expected in zip(sub_bounds, expected_bounds):
-        assert sub_bound == expected, f"Generated {str(sub_bound)} and expected {str(expected)} bounds do not match"
+    assert sub_bounds == expected_bounds
 
 
 def test_for_days_rejects_equal_start_and_end():
@@ -39,12 +39,19 @@ def test_for_days_rejects_inverted_range():
 
 
 def test_for_days_end_exclusive_semantics_preserved():
-    """`for_days` still encodes end_exclusive as 23:59:59.999999 of the previous day."""
+    """`for_days` encodes a literal half-open midnight boundary."""
     bounds: Bounds = Bounds.for_days(date(2025, 1, 1), date(2025, 1, 2))
     assert bounds.start_inclusive == datetime(2025, 1, 1, 0, 0, 0)
-    assert bounds.end_exclusive == datetime(2025, 1, 1, 23, 59, 59, 999999)
+    assert bounds.end_exclusive == datetime(2025, 1, 2, 0, 0, 0)
     assert bounds.day0 == date(2025, 1, 1)
     assert bounds.day1 == date(2025, 1, 1)
+
+
+def test_direct_bounds_reject_empty_or_inverted_ranges():
+    with pytest.raises(ValueError):
+        Bounds(datetime(2025, 1, 1), datetime(2025, 1, 1))
+    with pytest.raises(ValueError):
+        Bounds(datetime(2025, 1, 2), datetime(2025, 1, 1))
 
 
 def test_midnight_exclusive_bounds_do_not_include_boundary_day():

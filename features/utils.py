@@ -24,7 +24,9 @@ def aggregate_into_trades(df_ticks: pl.DataFrame) -> pl.DataFrame:
         quantity_abs=pl.col("quantity").sum(),
         num_ticks=pl.col("price").count(),  # number of ticks for each trade
     )
-    df_trades = df_trades.with_columns(is_long=pl.col("quantity_sign") >= 0)
+    # A zero-net-side timestamp is neutral, not a buy. Counting it as long
+    # biases the share-of-long-trades feature upward in mixed-fill groups.
+    df_trades = df_trades.with_columns(is_long=pl.col("quantity_sign") > 0)
     return df_trades
 
 

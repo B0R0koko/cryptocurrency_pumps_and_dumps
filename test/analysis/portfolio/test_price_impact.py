@@ -215,11 +215,21 @@ def test_topk_transaction_applies_price_impact_to_full_notional(monkeypatch) -> 
         quote_to_usdt=rate,
         num_samples=100,
     )
-    monkeypatch.setattr(TOPKPortfolio, "_get_impact_model", lambda self, pump, cp: impact_model)
+    impact_cutoffs: list[datetime] = []
+
+    def get_impact_model(self, pump, cp, end_exclusive):
+        impact_cutoffs.append(end_exclusive)
+        return impact_model
+
+    monkeypatch.setattr(TOPKPortfolio, "_get_impact_model", get_impact_model)
 
     ts_price = pd.Series(
-        index=[pump.time - timedelta(minutes=20), pump.time + timedelta(minutes=1)],
-        data=[100.0, 110.0],
+        index=[
+            pump.time - timedelta(minutes=20),
+            pump.time - timedelta(minutes=14),
+            pump.time + timedelta(minutes=1),
+        ],
+        data=[99.0, 100.0, 110.0],
     )
     tx = manager.regular_transaction(ts_price=ts_price, pump=pump, cp=cp)
 
@@ -230,6 +240,8 @@ def test_topk_transaction_applies_price_impact_to_full_notional(monkeypatch) -> 
     assert np.isclose(tx.exit_price, 110.0 * (1 - vwap_bps / 1e4), atol=0.05)
     assert np.isclose(tx.entry_filled_notional_quote, 100.0)
     assert np.isclose(tx.exit_filled_notional_quote, 100.0)
+    assert tx.entry_ts == pump.time - timedelta(minutes=14)
+    assert impact_cutoffs == [pump.time - timedelta(minutes=14)]
     assert isinstance(DummyModel().rank(dataset=dataset), pd.Series)
 
 
@@ -262,11 +274,19 @@ def test_topk_transaction_converts_usdt_to_quote_before_price_impact(
         quote_to_usdt=rate,
         num_samples=10,
     )
-    monkeypatch.setattr(TOPKPortfolio, "_get_impact_model", lambda self, pump, cp: impact_model)
+    monkeypatch.setattr(
+        TOPKPortfolio,
+        "_get_impact_model",
+        lambda self, pump, cp, end_exclusive: impact_model,
+    )
 
     ts_price = pd.Series(
-        index=[pump.time - timedelta(minutes=20), pump.time + timedelta(minutes=1)],
-        data=[100.0, 110.0],
+        index=[
+            pump.time - timedelta(minutes=20),
+            pump.time - timedelta(minutes=14),
+            pump.time + timedelta(minutes=1),
+        ],
+        data=[99.0, 100.0, 110.0],
     )
     tx = manager.regular_transaction(ts_price=ts_price, pump=pump, cp=cp)
 

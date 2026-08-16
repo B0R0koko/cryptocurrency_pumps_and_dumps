@@ -13,7 +13,6 @@ from backtest.pipelines.BasePipeline import (
     fillna_with_median_by_cross_section,
 )
 from backtest.utils.columns import (
-    COL_ASSET_RETURN_RANK,
     COL_CURRENCY_PAIR,
     COL_IS_PUMPED,
     COL_PUMP_HASH,
@@ -37,7 +36,7 @@ def _scale_columns() -> list[str]:
     )
 
 
-def test_cross_section_standardisation_skips_constant_features_without_dividing_by_zero() -> None:
+def test_cross_section_standardisation_maps_constant_features_to_neutral_zero() -> None:
     cols = _scale_columns()
     rows: list[dict[str, float]] = []
 
@@ -56,10 +55,10 @@ def test_cross_section_standardisation_skips_constant_features_without_dividing_
     scaled = cross_section_standardisation(df=df)
     representative_col = cols[0]
 
-    # Constant cross-section should be preserved exactly instead of raising.
+    # A constant cross-section has no relative information and must be neutral.
     assert np.allclose(
         scaled.loc[scaled[COL_PUMP_ID] == 0, representative_col].to_numpy(),
-        df.loc[df[COL_PUMP_ID] == 0, representative_col].to_numpy(),
+        0.0,
     )
 
     # Variable cross-section should still be standardized.
@@ -148,10 +147,8 @@ def _make_raw_dataset() -> pd.DataFrame:
     return df
 
 
-def test_survivorship_filter_drops_failed_train_pump_but_keeps_failed_test_pump(monkeypatch) -> None:
-    """Regression: ``remove_failed_pump_cross_sections`` must run on the TRAIN
-    slice only, not on the raw frame before ``split_by_time``. A "failed" pump
-    that lands in the TEST window must remain visible to reported metrics."""
+def test_time_split_never_filters_cross_sections_using_post_pump_returns(monkeypatch) -> None:
+    """Post-pump outcomes must not determine membership in any data split."""
     raw_df: pd.DataFrame = _make_raw_dataset()
 
     # Force the raw-dataset cache to return our synthetic frame and bypass the
@@ -175,37 +172,14 @@ def test_survivorship_filter_drops_failed_train_pump_but_keeps_failed_test_pump(
     validation_hashes = set(datasets[DatasetType.VALIDATION][COL_PUMP_HASH].unique())
     test_hashes = set(datasets[DatasetType.TEST][COL_PUMP_HASH].unique())
 
-    # Failed train pump gets dropped by the survivorship filter.
-    assert "pump-train-failed" not in train_hashes
-    # Validation pump is healthy so it stays regardless.
+    # Even the outcome-ranked "failed" examples remain: their post-pump return
+    # is a supervised label/diagnostic, never a feature or an eligibility rule.
+    assert "pump-train-failed" in train_hashes
     assert "pump-val-good" in validation_hashes
-    # Failed TEST pump MUST remain: this is the whole point of the fix.
     assert "pump-test-failed" in test_hashes
 
-    # The transient ranking column added by ``remove_failed_pump_cross_sections``
-    # is not left behind on any split.
     for ds in datasets.values():
-        assert COL_ASSET_RETURN_RANK not in ds.columns
-
-
-def test_survivorship_filter_preserves_preexisting_ranker_label_column() -> None:
-    """Regression: CatboostRanker's label column shares the name
-    ``COL_ASSET_RETURN_RANK``. Since the filter now runs after
-    ``preprocess_data`` (which creates that label), it must neither
-    overwrite nor drop a pre-existing column of that name."""
-    from backtest.pipelines.BasePipeline import remove_failed_pump_cross_sections
-
-    df: pd.DataFrame = _make_raw_dataset()
-    label_values: pd.Series = pd.Series(np.linspace(0.0, 1.0, len(df)), index=df.index)
-    df[COL_ASSET_RETURN_RANK] = label_values
-
-    filtered: pd.DataFrame = remove_failed_pump_cross_sections(df=df)
-
-    assert COL_ASSET_RETURN_RANK in filtered.columns
-    # Surviving rows keep their original label values (index was reset by the filter).
-    surviving_mask = df[COL_PUMP_HASH].isin(filtered[COL_PUMP_HASH].unique())
-    expected = label_values[surviving_mask].reset_index(drop=True)
-    pd.testing.assert_series_equal(filtered[COL_ASSET_RETURN_RANK], expected, check_names=False)
+        assert ds[COL_PUMP_HASH].nunique() == 1
 
 
 def test_fillna_with_median_by_cross_section_uses_train_only_global_fallback() -> None:
@@ -242,3 +216,19 @@ def test_fillna_with_median_by_cross_section_uses_train_only_global_fallback() -
     # would be much higher because of the validation values 100 and 200.
     assert np.isclose(val_nan_value, 2.0)
     assert np.isclose(test_nan_value, 2.0)
+
+
+def test_fillna_without_train_rows_never_uses_future_global_values() -> None:
+    """A validation-only frame must not derive an imputation prior from itself."""
+    feature_set = FeatureSet(numeric_features=["feature_a"], target=COL_IS_PUMPED)
+    val_time: datetime = TRAIN_END + pd.Timedelta(days=1)
+    df = pd.DataFrame(
+        [
+            {COL_PUMP_HASH: "val-observed", COL_PUMP_TIME: val_time, "feature_a": 100.0},
+            {COL_PUMP_HASH: "val-missing", COL_PUMP_TIME: val_time, "feature_a": np.nan},
+        ]
+    )
+
+    filled = fillna_with_median_by_cross_section(df=df, feature_set=feature_set)
+
+    assert filled.loc[filled[COL_PUMP_HASH] == "val-missing", "feature_a"].iloc[0] == 0.0

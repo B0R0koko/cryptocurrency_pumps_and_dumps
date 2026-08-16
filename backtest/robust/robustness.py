@@ -274,7 +274,7 @@ def evaluate_subperiod_metrics(
     date_col : str
         Column containing the event timestamp used for splitting.
     split_date : str
-        ISO date string to split the test set into early (<= split_date) and late (> split_date).
+        ISO date string to split the test set into early (< split_date) and late (>= split_date).
     topk_bins : Sequence[float]
         Percentage bins for Top@k% evaluation.
     min_pumps : int
@@ -294,8 +294,8 @@ def evaluate_subperiod_metrics(
     split_ts = pd.Timestamp(split_date)
 
     pump_dates = dataset_df.groupby(COL_PUMP_HASH)[date_col].min()
-    early_hashes = pump_dates[pump_dates <= split_ts].index
-    late_hashes = pump_dates[pump_dates > split_ts].index
+    early_hashes = pump_dates[pump_dates < split_ts].index
+    late_hashes = pump_dates[pump_dates >= split_ts].index
 
     feature_set = FeatureSet.auto()
 

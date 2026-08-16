@@ -73,6 +73,20 @@ def test_get_cross_section_currencies_only_reads_partitions_inside_bounds(tmp_pa
     assert {p.name for p in pairs} == {"BTC-USDT"}
 
 
+def test_get_cross_section_currencies_returns_deterministic_symbol_order(tmp_path: Path) -> None:
+    _make_partition(
+        tmp_path,
+        date(2024, 5, 15),
+        symbols=["ZZZ-BTC", "AAA-BTC", "MMM-BTC"],
+        extras=[],
+    )
+    pairs = get_cross_section_currencies(
+        hive_dir=tmp_path,
+        bounds=Bounds.for_days(date(2024, 5, 1), date(2024, 6, 1)),
+    )
+    assert [pair.name for pair in pairs] == ["AAA-BTC", "MMM-BTC", "ZZZ-BTC"]
+
+
 def test_get_cross_section_currencies_skips_unparseable_pair_names(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

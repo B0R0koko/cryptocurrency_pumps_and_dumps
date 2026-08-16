@@ -54,11 +54,7 @@ class LogisticRegressionPipeline(BasePipeline):
 
     @overrides
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Define all data preprocessing steps here.
-
-        Survivorship filtering is applied to the TRAIN split only in
-        :meth:`BasePipeline.build_datasets`.
-        """
+        """Apply only transformations available without post-pump outcomes."""
         df = add_col_pump_id(df=df)
         powerlaw_cols: List[str] = FeatureType.POWERLAW_ALPHA.col_names(offsets=REGRESSOR_OFFSETS)
         df[powerlaw_cols] = df[powerlaw_cols].clip(1, 2)
@@ -110,11 +106,11 @@ class LogisticRegressionPipeline(BasePipeline):
             dataset=sample.get_dataset(ds_type=DatasetType.VALIDATION),
             bins=[0.01, 0.02, 0.05, 0.1, 0.2],
         )
-        logging.info(f"TopK Accuracy:\n%s", topk_vals)
+        logging.info("Top@k%% accuracy:\n%s", topk_vals)
         return model
 
 
 if __name__ == "__main__":
     configure_logging()
     pipeline = LogisticRegressionPipeline()
-    pipeline.optimize_parameters()
+    pipeline.optimize_parameters(n_trials=100)

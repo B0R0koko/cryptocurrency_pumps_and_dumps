@@ -22,27 +22,34 @@ def calculate_topk(model: ImplementsRank, dataset: Dataset, bins: Iterable[float
         the pumped asset. The denominator is the number of cross-sections that contain
         at least one pumped row, not the number of pumped rows.
     """
+    bins_list: list[int] = [int(k) for k in bins]
+    if any(k < 1 for k in bins_list):
+        raise ValueError(f"Top@k bins must be positive integers, got {bins_list}")
     probas_pred: np.ndarray = model.rank(dataset=dataset)
     _df: pd.DataFrame = dataset.all_data().copy()
     _df[COL_PROBAS_PRED] = probas_pred
 
-    count_by_bins: Dict[float, int] = {}
+    count_by_bins: Dict[float, int] = {k: 0 for k in bins_list}
     num_cross_sections_with_pump: int = 0
 
     for pump_hash, df_cross_section in _df.groupby(COL_PUMP_HASH):
         if not df_cross_section[COL_IS_PUMPED].any():
             continue
         num_cross_sections_with_pump += 1
-        df_cross_section = df_cross_section.sort_values(by=COL_PROBAS_PRED, ascending=False).reset_index(drop=True)
-        for K in bins:
-            contains_pump: bool = df_cross_section.iloc[:K][COL_IS_PUMPED].any()
-            count_by_bins[K] = count_by_bins.get(K, 0) + int(contains_pump)
+        df_cross_section = df_cross_section.sort_values(
+            by=COL_PROBAS_PRED,
+            ascending=False,
+            kind="stable",
+        ).reset_index(drop=True)
+        for k in bins_list:
+            contains_pump: bool = bool(df_cross_section.iloc[:k][COL_IS_PUMPED].any())
+            count_by_bins[k] += int(contains_pump)
 
     counts = np.array(list(count_by_bins.values()))
     if num_cross_sections_with_pump == 0:
-        return pd.Series(data=np.zeros(len(counts)), index=list(bins))
+        return pd.Series(data=np.zeros(len(counts)), index=bins_list)
 
-    return pd.Series(data=counts / num_cross_sections_with_pump, index=list(bins))
+    return pd.Series(data=counts / num_cross_sections_with_pump, index=bins_list)
 
 
 def calculate_topk_percent(model: ImplementsRank, dataset: Dataset, bins: Iterable[float]) -> pd.Series:
@@ -51,30 +58,33 @@ def calculate_topk_percent(model: ImplementsRank, dataset: Dataset, bins: Iterab
     :return: pd.Series with Top@k% accuracy per bin. The denominator is the number of
         cross-sections that contain at least one pumped row.
     """
+    bins_list: list[float] = [float(pct) for pct in bins]
+    if any(pct < 0 or pct > 1 for pct in bins_list):
+        raise ValueError(f"Top@k% bins must lie in [0, 1], got {bins_list}")
     probas_pred: np.ndarray = model.rank(dataset=dataset)
     _df: pd.DataFrame = dataset.all_data().copy()
     _df[COL_PROBAS_PRED] = probas_pred
 
-    count_by_bins: Dict[float, int] = {}
+    count_by_bins: Dict[float, int] = {pct: 0 for pct in bins_list}
     num_cross_sections_with_pump: int = 0
 
     for pump_hash, df_cross_section in _df.groupby(COL_PUMP_HASH):
         if not df_cross_section[COL_IS_PUMPED].any():
             continue
         num_cross_sections_with_pump += 1
-        df_cross_section = df_cross_section.sort_values(by=COL_PROBAS_PRED, ascending=False)
+        df_cross_section = df_cross_section.sort_values(by=COL_PROBAS_PRED, ascending=False, kind="stable")
         n_rows = len(df_cross_section)
 
-        for pct_bin in bins:
+        for pct_bin in bins_list:
             k: int = int(np.ceil(n_rows * pct_bin))
-            contains_pump: bool = df_cross_section.iloc[:k][COL_IS_PUMPED].any() if k > 0 else False
-            count_by_bins[pct_bin] = count_by_bins.get(pct_bin, 0) + int(contains_pump)
+            contains_pump: bool = bool(df_cross_section.iloc[:k][COL_IS_PUMPED].any()) if k > 0 else False
+            count_by_bins[pct_bin] += int(contains_pump)
 
     counts = np.array(list(count_by_bins.values()))
     if num_cross_sections_with_pump == 0:
-        return pd.Series(data=np.zeros(len(counts)), index=list(bins))
+        return pd.Series(data=np.zeros(len(counts)), index=bins_list)
 
-    return pd.Series(data=counts / num_cross_sections_with_pump, index=list(bins))
+    return pd.Series(data=counts / num_cross_sections_with_pump, index=bins_list)
 
 
 def calculate_topk_percent_auc(

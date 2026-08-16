@@ -1,8 +1,8 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-# the IEEE Access class ships its own .cls and Type 1 fonts under paper/src/styles,
-# and figures live in paper/src/images; pdflatex needs both on its search paths
-tex_env := 'TEXINPUTS="./styles//:./images//:" TEXFONTS="./styles//:" T1FONTS="./styles//:"'
+# The IEEE Access class and Type 1 fonts live in paper/styles, while figures
+# live in paper/src/images. The build runs from paper/src.
+tex_env := 'TEXINPUTS="../styles//:./images//:" TEXFONTS="../styles//:" T1FONTS="../styles//:"'
 
 format-all:
     poetry run python -m black core features market_data preprocessing backtest test

@@ -37,8 +37,8 @@ def compute_share_of_long_trades() -> pl.Expr:
     return (pl.col("is_long").sum() / pl.len()).alias(FeatureType.SHARE_OF_LONG_TRADES.name)
 
 
-def compute_asset_return_zscore(asset_return_std: float) -> pl.Expr:
-    return pl.col("asset_return_pips").mean() / asset_return_std
+def compute_asset_return_zscore(asset_return_mean: float, asset_return_std: float) -> pl.Expr:
+    return (pl.col("asset_return_pips").mean() - asset_return_mean) / asset_return_std
 
 
 def compute_quote_abs_zscore(quote_abs_mean: float, quote_abs_std: float) -> pl.Expr:

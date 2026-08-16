@@ -25,7 +25,7 @@ from core.pump_event import PumpEvent
 
 class TOPKPortfolio(ImplementsPortfolio):
     """
-    Orchestrates top-k portfolio construction, execution simulation, and PnL evaluation.
+    Orchestrates Top@k portfolio construction, execution simulation, and PnL evaluation.
     """
 
     def __init__(
@@ -107,8 +107,17 @@ class TOPKPortfolio(ImplementsPortfolio):
     def create_portfolio(self, cross_section: Dataset) -> Portfolio:
         return self._selector.select_portfolio(model=self.model, cross_section=cross_section)
 
-    def _get_impact_model(self, pump: PumpEvent, cp: CurrencyPair) -> PriceImpactModel:
-        return self._impact_model_provider.get_impact_model(pump=pump, currency_pair=cp)
+    def _get_impact_model(
+        self,
+        pump: PumpEvent,
+        cp: CurrencyPair,
+        end_exclusive: datetime,
+    ) -> PriceImpactModel:
+        return self._impact_model_provider.get_impact_model(
+            pump=pump,
+            currency_pair=cp,
+            end_exclusive=end_exclusive,
+        )
 
     def _build_order_intent(
         self,
@@ -162,7 +171,11 @@ class TOPKPortfolio(ImplementsPortfolio):
         entry_impact_model: Optional[PriceImpactModel] = None
         exit_impact_model: Optional[PriceImpactModel] = None
         if self.config.use_price_impact:
-            entry_impact_model = self._get_impact_model(pump=intent.pump, cp=intent.currency_pair)
+            entry_impact_model = self._get_impact_model(
+                pump=intent.pump,
+                cp=intent.currency_pair,
+                end_exclusive=intent.entry_ts,
+            )
             if intent.is_manipulated_asset and intent.exit_ts is not None:
                 # For the pumped asset, exit happens during the manipulation window
                 # where liquidity regime differs from pre-pump. Use a separate model
@@ -223,18 +236,21 @@ class TOPKPortfolio(ImplementsPortfolio):
         """
         Simulate transaction for a non-manipulated asset around the pump window.
 
-        Entry is the latest price at or before `pump.time - buy_before`.
+        Entry is the first executable trade at or after `pump.time - buy_before`
+        and strictly before the announcement. Using the last earlier print would
+        grant the strategy a price from before its signal existed.
         Exit is the earliest price at or after `pump.time`.
         """
         assert ts_price.index.is_monotonic_increasing
-        entry_series: pd.Series = ts_price[ts_price.index <= pump.time - self._buy_before]
+        decision_ts: datetime = pump.time - self._buy_before
+        entry_series: pd.Series = ts_price[(ts_price.index >= decision_ts) & (ts_price.index < pump.time)]
         exit_series: pd.Series = ts_price[ts_price.index >= pump.time]
 
         if entry_series.empty or exit_series.empty:
             logging.info("No data to get prices for %s", cp.name)
             return Transaction.empty(currency_pair=cp)
 
-        entry_price, entry_ts = entry_series.iloc[-1], entry_series.index[-1]
+        entry_price, entry_ts = entry_series.iloc[0], entry_series.index[0]
         exit_price, exit_ts = exit_series.iloc[0], exit_series.index[0]
         intent = self._build_order_intent(
             cp=cp,
@@ -251,18 +267,20 @@ class TOPKPortfolio(ImplementsPortfolio):
         """
         Simulate transaction for the manipulated asset itself.
 
-        Entry still occurs before the pump, while exit is delayed by `sell_after`
-        to avoid unrealistically selling inside the pump candle.
+        Entry is the first trade at or after the decision timestamp and strictly
+        before the pump. Exit is delayed by `sell_after` to avoid unrealistically
+        selling inside the pump candle.
         """
         assert ts_price.index.is_monotonic_increasing
-        entry: pd.Series = ts_price[ts_price.index <= pump.time - self._buy_before]
+        decision_ts: datetime = pump.time - self._buy_before
+        entry: pd.Series = ts_price[(ts_price.index >= decision_ts) & (ts_price.index < pump.time)]
         exit: pd.Series = ts_price[ts_price.index >= pump.time + self._sell_after]
 
         if entry.empty or exit.empty:
             logging.info("No data to get prices for %s", cp.name)
             return Transaction.empty(currency_pair=cp)
 
-        entry_price, entry_ts = entry.iloc[-1], entry.index[-1]
+        entry_price, entry_ts = entry.iloc[0], entry.index[0]
         exit_price, exit_ts = exit.iloc[0], exit.index[0]
         intent = self._build_order_intent(
             cp=cp,
@@ -354,7 +372,7 @@ def evaluate_topk_pnl_for_quantities(
     impact_lookback_days: int = 14,
 ) -> pd.DataFrame:
     """
-    Backtest top-k strategy over a sweep of order sizes expressed in USDT.
+    Backtest a Top@k strategy over a sweep of order sizes expressed in USDT.
 
     `quantities_quote` is kept only for backward compatibility and is interpreted
     as USDT quantities when `quantities_usdt` is not provided.
@@ -375,7 +393,7 @@ def evaluate_topk_pnl_for_quantities(
 
 def portfolio_pnl_objective(trial: Trial, model: ImplementsRank, sample: Sample) -> float:
     """
-    Optuna objective for tuning portfolio timing and top-k size parameters.
+    Optuna objective for tuning portfolio timing and Top@k size parameters.
 
     The objective is evaluated on ``DatasetType.VALIDATION`` to avoid tuning against
     the held-out test set. The test set is reserved for final reported numbers.

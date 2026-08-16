@@ -44,30 +44,33 @@ class Bounds:
     start_inclusive: datetime
     end_exclusive: datetime
 
+    def __post_init__(self) -> None:
+        if self.end_exclusive <= self.start_inclusive:
+            raise ValueError(
+                "Bounds requires end_exclusive > start_inclusive; "
+                f"got start_inclusive={self.start_inclusive}, end_exclusive={self.end_exclusive}"
+            )
+
     @classmethod
     def for_days(cls, start_inclusive: date, end_exclusive: date) -> "Bounds":
         """
         For instance, if we pass start_inclusive = date(2024, 11, 1) and end_exclusive = date(2024, 12, 1),
-        Final Bounds will have the following datetime (2024-11-01 0:00:00, 2024-11-30 23:59:59.999999).
+        Final Bounds will have the half-open datetimes
+        ``[2024-11-01 00:00:00, 2024-12-01 00:00:00)``.
 
         Raises ValueError when end_exclusive <= start_inclusive; an empty or inverted range is almost
         always a caller bug and previously produced a silently inverted Bounds that yielded zero rows.
         """
-        if end_exclusive <= start_inclusive:
-            raise ValueError(
-                f"Bounds.for_days requires end_exclusive > start_inclusive; "
-                f"got start_inclusive={start_inclusive}, end_exclusive={end_exclusive}"
-            )
         return cls(
             start_inclusive=start_of_the_day(day=start_inclusive),
-            end_exclusive=end_of_the_day(day=end_exclusive - timedelta(days=1)),
+            end_exclusive=start_of_the_day(day=end_exclusive),
         )
 
     @classmethod
     def for_day(cls, day: date) -> "Bounds":
         return cls(
             start_inclusive=start_of_the_day(day=day),
-            end_exclusive=end_of_the_day(day=day),
+            end_exclusive=start_of_the_day(day=day + timedelta(days=1)),
         )
 
     @property
@@ -94,27 +97,23 @@ class Bounds:
     def generate_overlapping_bounds(self, step: timedelta, interval: timedelta) -> List["Bounds"]:
         """Returns a list of bounds created from a parent Bounds interval with a certain interval size and step.
 
-        The final sub-bound may be shorter than `interval` when the parent range is not an exact
-        multiple of `step`; callers relying on uniform-length windows should slice the parent to a
-        multiple of `step` first.
+        Bounds are half-open and adjacent windows therefore share no rows. The
+        final sub-bound may be shorter than `interval` when the parent range is
+        not an exact multiple of `step`.
         """
         intervals: List["Bounds"] = []
 
         lb = self.start_inclusive
 
-        while True:
-            rb: datetime = lb + interval
-            # create new overlapping sub-Bounds
+        while lb < self.end_exclusive:
+            rb: datetime = min(lb + interval, self.end_exclusive)
             intervals.append(
                 Bounds(
                     start_inclusive=lb,
-                    end_exclusive=min(rb - timedelta(microseconds=1), self.end_exclusive),
+                    end_exclusive=rb,
                 )
             )
             lb += step
-
-            if rb >= self.end_exclusive:
-                break
 
         return intervals
 
